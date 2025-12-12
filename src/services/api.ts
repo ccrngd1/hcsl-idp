@@ -61,6 +61,28 @@ export const bedrockService = {
     return response.data
   },
 
+  async validateExtraction(
+    pdfFile: File,
+    extractedJson: string,
+    modelId: string,
+    hyperparameters: {
+      temperature: number
+    }
+  ) {
+    const formData = new FormData()
+    formData.append('pdf_file', pdfFile)
+    formData.append('extracted_json', extractedJson)
+    formData.append('model_id', modelId)
+    formData.append('hyperparameters', JSON.stringify(hyperparameters))
+
+    const response = await bedrockApi.post('/bedrock/validate', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data
+  },
+
   async testConnection() {
     const response = await bedrockApi.post('/bedrock/test-connection')
     return response.data

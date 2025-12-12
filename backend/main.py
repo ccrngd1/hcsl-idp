@@ -48,6 +48,15 @@ class BedrockExtractionResponse(BaseModel):
     document_info: Dict[str, Any]
     processing_time_seconds: Optional[float] = None
 
+class BedrockValidationResponse(BaseModel):
+    success: bool
+    validation_result: str
+    model_used: str
+    usage_metrics: Dict[str, int]
+    hyperparameters_used: Dict[str, Any]
+    document_info: Dict[str, Any]
+    processing_time_seconds: Optional[float] = None
+
 # In-memory storage (replace with database in production)
 items_db = {}
 
@@ -149,6 +158,50 @@ async def get_available_models():
     Get list of available Bedrock models and their capabilities
     """
     return bedrock_service.get_available_models()
+
+@app.post("/api/bedrock/validate", response_model=BedrockValidationResponse)
+async def validate_extraction(
+    pdf_file: UploadFile = File(...),
+    extracted_json: str = Form(...),
+    model_id: str = Form("anthropic.claude-3-sonnet-20240229-v1:0"),
+    hyperparameters: str = Form("{}")
+):
+    """
+    Validate extracted JSON against the original PDF using AWS Bedrock
+    """
+    # Validate file type
+    if pdf_file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    
+    try:
+        # Parse hyperparameters
+        hyperparams = json.loads(hyperparameters) if hyperparameters else {}
+        
+        # Read PDF content
+        pdf_content = await pdf_file.read()
+        
+        # Record start time
+        start_time = datetime.now()
+        
+        # Validate with Bedrock
+        result = await bedrock_service.validate_extraction_with_bedrock(
+            pdf_content=pdf_content,
+            extracted_json=extracted_json,
+            model_id=model_id,
+            hyperparameters=hyperparams,
+            filename=pdf_file.filename or "document.pdf"
+        )
+        
+        # Calculate processing time
+        processing_time = (datetime.now() - start_time).total_seconds()
+        result["processing_time_seconds"] = processing_time
+        
+        return BedrockValidationResponse(**result)
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid hyperparameters JSON format")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
 
 @app.post("/api/bedrock/test-connection")
 async def test_bedrock_connection():

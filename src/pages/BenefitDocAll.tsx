@@ -28,221 +28,228 @@ export default function BenefitDocAll() {
   const [loading, setLoading] = useState(false)
   const [uploadingFile, setUploadingFile] = useState(false)
   const [pdfLoading, setPdfLoading] = useState(false)
-  const [promptTemplate, setPromptTemplate] = useState(
-    sessionStorage.getItem('benefitExtractionPrompt') || 
+  // Split the prompt into instructions and JSON schema
+  const [promptInstructions, setPromptInstructions] = useState(
+    sessionStorage.getItem('benefitExtractionInstructions') || 
+    `Parse this health insurance benefit document into the following JSON structure.
+
+Return only the JSON output.`
+  )
+  
+  const [jsonSchema, setJsonSchema] = useState(
+    sessionStorage.getItem('benefitExtractionSchema') || 
     `{
-      Parse this health insurance benefit document into the follow JSON structure.
-
-      Return only the JSON output.
-
-      "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["plan_info", "deductibles", "out_of_pocket_limits", "services"],
+  "properties": {
+    "plan_info": {
       "type": "object",
-      "required": ["plan_info", "deductibles", "out_of_pocket_limits", "services"],
+      "required": ["name", "type", "coverage_period", "coverage_level"],
       "properties": {
-        "plan_info": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["PPO", "HMO", "EPO", "POS", "HDHP"] },
+        "coverage_period": {
           "type": "object",
-          "required": ["name", "type", "coverage_period", "coverage_level"],
+          "required": ["start_date", "end_date"],
           "properties": {
-            "name": { "type": "string" },
-            "type": { "type": "string", "enum": ["PPO", "HMO", "EPO", "POS", "HDHP"] },
-            "coverage_period": {
-              "type": "object",
-              "required": ["start_date", "end_date"],
-              "properties": {
-                "start_date": { "type": "string", "format": "date" },
-                "end_date": { "type": "string", "format": "date" }
-              }
-            },
-            "coverage_level": { "type": "string" }
+            "start_date": { "type": "string", "format": "date" },
+            "end_date": { "type": "string", "format": "date" }
           }
         },
-        "deductibles": {
+        "coverage_level": { "type": "string" }
+      }
+    },
+    "deductibles": {
+      "type": "object",
+      "required": ["in_network", "out_of_network"],
+      "properties": {
+        "in_network": {
+          "type": "object",
+          "required": ["individual", "family"],
+          "properties": {
+            "individual": { "type": "number" },
+            "family": { "type": "number" }
+          }
+        },
+        "out_of_network": {
+          "type": "object",
+          "required": ["individual", "family"],
+          "properties": {
+            "individual": { "type": "number" },
+            "family": { "type": "number" }
+          }
+        }
+      }
+    },
+    "out_of_pocket_limits": {
+      "type": "object",
+      "required": ["in_network", "out_of_network"],
+      "properties": {
+        "in_network": {
+          "type": "object",
+          "required": ["individual", "family"],
+          "properties": {
+            "individual": { "type": "number" },
+            "family": { "type": "number" }
+          }
+        },
+        "out_of_network": {
+          "type": "object",
+          "required": ["individual", "family"],
+          "properties": {
+            "individual": { "type": "number" },
+            "family": { "type": "number" }
+          }
+        }
+      }
+    },
+    "services": {
+      "type": "object",
+      "properties": {
+        "primary_care": {
           "type": "object",
           "required": ["in_network", "out_of_network"],
           "properties": {
             "in_network": {
               "type": "object",
-              "required": ["individual", "family"],
+              "required": ["copay", "deductible_applies"],
               "properties": {
-                "individual": { "type": "number" },
-                "family": { "type": "number" }
+                "copay": { "type": "number" },
+                "deductible_applies": { "type": "boolean" }
               }
             },
             "out_of_network": {
               "type": "object",
-              "required": ["individual", "family"],
+              "required": ["coinsurance", "deductible_applies"],
               "properties": {
-                "individual": { "type": "number" },
-                "family": { "type": "number" }
-              }
-            }
-          }
-        },
-        "out_of_pocket_limits": {
-          "type": "object",
-          "required": ["in_network", "out_of_network"],
-          "properties": {
-            "in_network": {
-              "type": "object",
-              "required": ["individual", "family"],
-              "properties": {
-                "individual": { "type": "number" },
-                "family": { "type": "number" }
-              }
-            },
-            "out_of_network": {
-              "type": "object",
-              "required": ["individual", "family"],
-              "properties": {
-                "individual": { "type": "number" },
-                "family": { "type": "number" }
-              }
-            }
-          }
-        },
-        "services": {
-          "type": "object",
-          "properties": {
-            "primary_care": {
-              "type": "object",
-              "required": ["in_network", "out_of_network"],
-              "properties": {
-                "in_network": {
-                  "type": "object",
-                  "required": ["copay", "deductible_applies"],
-                  "properties": {
-                    "copay": { "type": "number" },
-                    "deductible_applies": { "type": "boolean" }
-                  }
-                },
-                "out_of_network": {
-                  "type": "object",
-                  "required": ["coinsurance", "deductible_applies"],
-                  "properties": {
-                    "coinsurance": { "type": "number" },
-                    "deductible_applies": { "type": "boolean" }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "emergency_services": {
-          "type": "object",
-          "required": ["emergency_room", "emergency_medical_transportation", "urgent_care"],
-          "properties": {
-            "emergency_room": {
-              "type": "object",
-              "required": ["accident", "medical_emergency"],
-              "properties": {
-                "accident": {
-                  "type": "object",
-                  "required": ["copay", "deductible_applies"],
-                  "properties": {
-                    "copay": { "type": "number" },
-                    "deductible_applies": { "type": "boolean" },
-                    "notes": { "type": "string" }
-                  }
-                },
-                "medical_emergency": {
-                  "type": "object",
-                  "required": ["copay", "deductible_applies"],
-                  "properties": {
-                    "copay": { "type": "number" },
-                    "deductible_applies": { "type": "boolean" }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "hospital_stays": {
-          "type": "object",
-          "required": ["facility_fee", "physician_surgeon_fees"],
-          "properties": {
-            "facility_fee": {
-              "type": "object",
-              "required": ["in_network", "out_of_network", "limitations"],
-              "properties": {
-                "in_network": {
-                  "type": "object",
-                  "required": ["coinsurance", "deductible_applies"],
-                  "properties": {
-                    "coinsurance": { "type": "number" },
-                    "deductible_applies": { "type": "boolean" }
-                  }
-                },
-                "out_of_network": {
-                  "type": "object",
-                  "required": ["coinsurance", "deductible_applies"],
-                  "properties": {
-                    "coinsurance": { "type": "number" },
-                    "deductible_applies": { "type": "boolean" }
-                  }
-                },
-                "limitations": { "type": "string" }
-              }
-            }
-          }
-        },
-        "prescription_drugs": {
-          "type": "object",
-          "required": ["tier_1", "tier_2", "tier_3", "tier_4"],
-          "properties": {
-            "tier_1": {
-              "type": "object",
-              "required": ["retail_copay", "mail_order_copay", "deductible_applies"],
-              "properties": {
-                "retail_copay": { "type": "number" },
-                "mail_order_copay": { "type": "number" },
+                "coinsurance": { "type": "number" },
                 "deductible_applies": { "type": "boolean" }
               }
             }
           }
-        },
-        "additional_limitations": {
+        }
+      }
+    },
+    "emergency_services": {
+      "type": "object",
+      "required": ["emergency_room", "emergency_medical_transportation", "urgent_care"],
+      "properties": {
+        "emergency_room": {
           "type": "object",
+          "required": ["accident", "medical_emergency"],
           "properties": {
-            "rehabilitation_services": {
+            "accident": {
               "type": "object",
+              "required": ["copay", "deductible_applies"],
               "properties": {
-                "visit_limits": {
-                  "type": "object",
-                  "properties": {
-                    "combined_maximum": { "type": "number" },
-                    "services_included": {
-                      "type": "array",
-                      "items": { "type": "string" }
-                    },
-                    "special_provisions": { "type": "string" }
-                  }
-                }
+                "copay": { "type": "number" },
+                "deductible_applies": { "type": "boolean" },
+                "notes": { "type": "string" }
               }
             },
-            "precertification_required": {
-              "type": "array",
-              "items": { "type": "string" }
+            "medical_emergency": {
+              "type": "object",
+              "required": ["copay", "deductible_applies"],
+              "properties": {
+                "copay": { "type": "number" },
+                "deductible_applies": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "hospital_stays": {
+      "type": "object",
+      "required": ["facility_fee", "physician_surgeon_fees"],
+      "properties": {
+        "facility_fee": {
+          "type": "object",
+          "required": ["in_network", "out_of_network", "limitations"],
+          "properties": {
+            "in_network": {
+              "type": "object",
+              "required": ["coinsurance", "deductible_applies"],
+              "properties": {
+                "coinsurance": { "type": "number" },
+                "deductible_applies": { "type": "boolean" }
+              }
             },
-            "network_restrictions": {
-              "type": "array",
-              "items": { "type": "string" }
+            "out_of_network": {
+              "type": "object",
+              "required": ["coinsurance", "deductible_applies"],
+              "properties": {
+                "coinsurance": { "type": "number" },
+                "deductible_applies": { "type": "boolean" }
+              }
+            },
+            "limitations": { "type": "string" }
+          }
+        }
+      }
+    },
+    "prescription_drugs": {
+      "type": "object",
+      "required": ["tier_1", "tier_2", "tier_3", "tier_4"],
+      "properties": {
+        "tier_1": {
+          "type": "object",
+          "required": ["retail_copay", "mail_order_copay", "deductible_applies"],
+          "properties": {
+            "retail_copay": { "type": "number" },
+            "mail_order_copay": { "type": "number" },
+            "deductible_applies": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "additional_limitations": {
+      "type": "object",
+      "properties": {
+        "rehabilitation_services": {
+          "type": "object",
+          "properties": {
+            "visit_limits": {
+              "type": "object",
+              "properties": {
+                "combined_maximum": { "type": "number" },
+                "services_included": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "special_provisions": { "type": "string" }
+              }
             }
           }
         },
-        "excluded_services": {
+        "precertification_required": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "network_restrictions": {
           "type": "array",
           "items": { "type": "string" }
         }
       }
+    },
+    "excluded_services": {
+      "type": "array",
+      "items": { "type": "string" }
     }
-
-    `
+  }
+}`
   )
   const [bedrockOutput, setBedrockOutput] = useState('')
   const [parsedJsonOutput, setParsedJsonOutput] = useState<any>(null)
   const [selectedPdfUrl, setSelectedPdfUrl] = useState<string | null>(null)
   const [selectedPdfFile, setSelectedPdfFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // Validation state
+  const [validating, setValidating] = useState(false)
+  const [validationResult, setValidationResult] = useState('')
+  const [hasExtracted, setHasExtracted] = useState(false)
 
   // LLM Configuration State
   const [selectedModel, setSelectedModel] = useState<ModelOption | null>(null)
@@ -302,8 +309,12 @@ export default function BenefitDocAll() {
       return
     }
 
-    // Save the prompt template to session storage
-    sessionStorage.setItem('benefitExtractionPrompt', promptTemplate)
+    // Save both parts to session storage
+    sessionStorage.setItem('benefitExtractionInstructions', promptInstructions)
+    sessionStorage.setItem('benefitExtractionSchema', jsonSchema)
+    
+    // Combine instructions and schema into a single prompt
+    const combinedPrompt = `${promptInstructions}\n\n${jsonSchema}`
     
     setLoading(true)
     setBedrockOutput('Processing document with Bedrock...')
@@ -314,10 +325,10 @@ export default function BenefitDocAll() {
         temperature: parseFloat(temperature)
       }
 
-      // Call the backend API using the service
+      // Call the backend API using the service with combined prompt
       const result = await bedrockService.extractFromDocument(
         selectedPdfFile,
-        promptTemplate,
+        combinedPrompt,
         selectedModel.value,
         hyperparameters
       )
@@ -338,10 +349,12 @@ export default function BenefitDocAll() {
         
         const jsonData = JSON.parse(cleanedContent)
         setParsedJsonOutput(jsonData)
+        setHasExtracted(true) // Enable validation button
         console.log('Successfully parsed JSON from Bedrock output')
       } catch (parseError) {
         console.log('Could not parse as JSON, showing raw text:', parseError)
         setParsedJsonOutput(null)
+        setHasExtracted(true) // Still enable validation even if JSON parsing failed
       }
 
     } catch (error) {
@@ -349,8 +362,54 @@ export default function BenefitDocAll() {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
       setBedrockOutput(`Error: ${errorMessage}`)
       setParsedJsonOutput(null)
+      setHasExtracted(false)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleValidate = async () => {
+    if (!selectedPdfFile) {
+      alert('Please upload a PDF file first')
+      return
+    }
+
+    if (!bedrockOutput) {
+      alert('Please extract data first before validating')
+      return
+    }
+
+    if (!selectedModel) {
+      alert('Please select a model first')
+      return
+    }
+
+    setValidating(true)
+    setValidationResult('Validating extraction with Bedrock...')
+
+    try {
+      // Prepare hyperparameters
+      const hyperparameters = {
+        temperature: parseFloat(temperature)
+      }
+
+      // Call the validation API
+      const result = await bedrockService.validateExtraction(
+        selectedPdfFile,
+        bedrockOutput,
+        selectedModel.value,
+        hyperparameters
+      )
+      
+      // Display the validation results
+      setValidationResult(result.validation_result)
+
+    } catch (error) {
+      console.error('Validation failed:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      setValidationResult(`Validation Error: ${errorMessage}`)
+    } finally {
+      setValidating(false)
     }
   }
 
@@ -387,6 +446,8 @@ export default function BenefitDocAll() {
         // Clear previous output
         setBedrockOutput('')
         setParsedJsonOutput(null)
+        setHasExtracted(false)
+        setValidationResult('')
         
         console.log('PDF file loaded:', file.name, `(${(file.size / 1024 / 1024).toFixed(2)} MB)`)
       } catch (error) {
@@ -438,6 +499,14 @@ export default function BenefitDocAll() {
               loading={loading}
             >
               Extract All Benefits
+            </Button>
+            <Button
+              onClick={handleValidate}
+              loading={validating}
+              disabled={!hasExtracted}
+              iconName="check"
+            >
+              {validating ? 'Validating...' : 'Validate'}
             </Button>
           </SpaceBetween>
         }
@@ -522,17 +591,32 @@ export default function BenefitDocAll() {
             )}
           </Container>
 
-          <Container header={<Header variant="h2">Prompt Template</Header>}>
-            <FormField
-              description="Edit the prompt template that will be sent to Bedrock. Changes are saved when you click Extract."
-            >
-              <Textarea
-                value={promptTemplate}
-                onChange={({ detail }) => setPromptTemplate(detail.value)}
-                rows={8}
-                placeholder="Enter your prompt template for benefit document extraction..."
-              />
-            </FormField>
+          <Container header={<Header variant="h2">Prompt Configuration</Header>}>
+            <SpaceBetween size="m">
+              <FormField
+                label="Instructions"
+                description="Enter the instructions for how to process the document. This will be combined with the JSON schema below."
+              >
+                <Textarea
+                  value={promptInstructions}
+                  onChange={({ detail }) => setPromptInstructions(detail.value)}
+                  rows={4}
+                  placeholder="Enter instructions for document processing..."
+                />
+              </FormField>
+              
+              <FormField
+                label="Expected JSON Structure"
+                description="Define the JSON schema that the model should follow for the output format."
+              >
+                <Textarea
+                  value={jsonSchema}
+                  onChange={({ detail }) => setJsonSchema(detail.value)}
+                  rows={12}
+                  placeholder="Enter the expected JSON schema..."
+                />
+              </FormField>
+            </SpaceBetween>
           </Container>
 
           <Container header={<Header variant="h2">Model Configuration</Header>}>
@@ -563,42 +647,64 @@ export default function BenefitDocAll() {
           </Container>
         </SpaceBetween>
 
-        <Container header={<Header variant="h2">Bedrock Extraction Output</Header>}>
-          <FormField
-            description="Results from Amazon Bedrock document analysis"
-          >
-            {parsedJsonOutput ? (
-              <div style={{ 
-                border: '1px solid #e1e4e8', 
-                borderRadius: '4px', 
-                padding: '12px',
-                backgroundColor: '#f8f9fa',
-                height: '1200px',
-                overflow: 'auto'
-              }}>
-                <JsonViewer 
-                  value={parsedJsonOutput}
-                  theme="light"
-                  displayDataTypes={false}
-                  enableClipboard={true}
-                  rootName="extraction_result"
+        <SpaceBetween size="m">
+          <Container header={<Header variant="h2">Bedrock Extraction Output</Header>}>
+            <FormField
+              description="Results from Amazon Bedrock document analysis"
+            >
+              {parsedJsonOutput ? (
+                <div style={{ 
+                  border: '1px solid #e1e4e8', 
+                  borderRadius: '4px', 
+                  padding: '12px',
+                  backgroundColor: '#f8f9fa',
+                  height: '600px',
+                  overflow: 'auto'
+                }}>
+                  <JsonViewer 
+                    value={parsedJsonOutput}
+                    theme="light"
+                    displayDataTypes={false}
+                    enableClipboard={true}
+                    rootName="extraction_result"
+                  />
+                </div>
+              ) : bedrockOutput ? (
+                <Textarea
+                  value={bedrockOutput}
+                  onChange={({ detail }) => setBedrockOutput(detail.value)}
+                  rows={15}
+                  placeholder="No extraction results yet. Upload a PDF and click Extract to see Bedrock output here."
                 />
-              </div>
-            ) : bedrockOutput ? (
-              <Textarea
-                value={bedrockOutput}
-                onChange={({ detail }) => setBedrockOutput(detail.value)}
-                rows={30}
-                placeholder="No extraction results yet. Upload a PDF and click Extract to see Bedrock output here."
-              />
-            ) : (
-              <Box textAlign="center" padding="l" color="text-status-inactive">
-                <Box variant="strong">No extraction results yet</Box>
-                <Box variant="p">Upload a PDF and click Extract to see Bedrock output here.</Box>
-              </Box>
-            )}
-          </FormField>
-        </Container>
+              ) : (
+                <Box textAlign="center" padding="l" color="text-status-inactive">
+                  <Box variant="strong">No extraction results yet</Box>
+                  <Box variant="p">Upload a PDF and click Extract to see Bedrock output here.</Box>
+                </Box>
+              )}
+            </FormField>
+          </Container>
+
+          <Container header={<Header variant="h2">Validation Results</Header>}>
+            <FormField
+              description="Validation of extracted data against the original document"
+            >
+              {validationResult ? (
+                <Textarea
+                  value={validationResult}
+                  onChange={({ detail }) => setValidationResult(detail.value)}
+                  rows={15}
+                  placeholder="No validation results yet. Click Validate after extraction to see validation report here."
+                />
+              ) : (
+                <Box textAlign="center" padding="l" color="text-status-inactive">
+                  <Box variant="strong">No validation results yet</Box>
+                  <Box variant="p">Click Validate after extraction to see validation report here.</Box>
+                </Box>
+              )}
+            </FormField>
+          </Container>
+        </SpaceBetween>
       </ColumnLayout>
 
 
