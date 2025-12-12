@@ -250,6 +250,8 @@ Return only the JSON output.`
   const [validating, setValidating] = useState(false)
   const [validationResult, setValidationResult] = useState('')
   const [hasExtracted, setHasExtracted] = useState(false)
+  const [validationAccuracy, setValidationAccuracy] = useState<'High' | 'Medium' | 'Low' | null>(null)
+  const [showValidationAlert, setShowValidationAlert] = useState(false)
 
   // LLM Configuration State
   const [selectedModel, setSelectedModel] = useState<ModelOption | null>(null)
@@ -368,6 +370,27 @@ Return only the JSON output.`
     }
   }
 
+  // Function to parse accuracy from validation result
+  const parseValidationAccuracy = (validationText: string): 'High' | 'Medium' | 'Low' | null => {
+    const lowerText = validationText.toLowerCase()
+    if (lowerText.includes('overall accuracy: high') || lowerText.includes('accuracy: high')) {
+      return 'High'
+    } else if (lowerText.includes('overall accuracy: medium') || lowerText.includes('accuracy: medium')) {
+      return 'Medium'
+    } else if (lowerText.includes('overall accuracy: low') || lowerText.includes('accuracy: low')) {
+      return 'Low'
+    }
+    // Try to infer from other indicators
+    if (lowerText.includes('excellent') || lowerText.includes('accurate') || lowerText.includes('no discrepancies')) {
+      return 'High'
+    } else if (lowerText.includes('some discrepancies') || lowerText.includes('minor issues')) {
+      return 'Medium'
+    } else if (lowerText.includes('significant discrepancies') || lowerText.includes('major issues')) {
+      return 'Low'
+    }
+    return null
+  }
+
   const handleValidate = async () => {
     if (!selectedPdfFile) {
       alert('Please upload a PDF file first')
@@ -386,6 +409,7 @@ Return only the JSON output.`
 
     setValidating(true)
     setValidationResult('Validating extraction with Bedrock...')
+    setShowValidationAlert(false)
 
     try {
       // Prepare hyperparameters
@@ -403,11 +427,18 @@ Return only the JSON output.`
       
       // Display the validation results
       setValidationResult(result.validation_result)
+      
+      // Parse accuracy and show alert
+      const accuracy = parseValidationAccuracy(result.validation_result)
+      setValidationAccuracy(accuracy)
+      setShowValidationAlert(true)
 
     } catch (error) {
       console.error('Validation failed:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
       setValidationResult(`Validation Error: ${errorMessage}`)
+      setValidationAccuracy('Low')
+      setShowValidationAlert(true)
     } finally {
       setValidating(false)
     }
@@ -448,6 +479,8 @@ Return only the JSON output.`
         setParsedJsonOutput(null)
         setHasExtracted(false)
         setValidationResult('')
+        setValidationAccuracy(null)
+        setShowValidationAlert(false)
         
         console.log('PDF file loaded:', file.name, `(${(file.size / 1024 / 1024).toFixed(2)} MB)`)
       } catch (error) {
@@ -527,7 +560,41 @@ Return only the JSON output.`
 
       <Alert type="info">
         This page processes all benefit documents and extracts comprehensive information including coverage details, premiums, deductibles, and policy terms.
-      </Alert> 
+      </Alert>
+
+      {showValidationAlert && validationAccuracy && (
+        <Alert
+          type={
+            validationAccuracy === 'High' ? 'success' : 
+            validationAccuracy === 'Medium' ? 'warning' : 
+            'error'
+          }
+          dismissible
+          onDismiss={() => setShowValidationAlert(false)}
+          header={`Validation Complete - ${validationAccuracy} Accuracy`}
+        >
+          <SpaceBetween size="s">
+            <Box>
+              {validationAccuracy === 'High' && 'The extracted data appears to be highly accurate and matches the document well.'}
+              {validationAccuracy === 'Medium' && 'The extracted data is mostly accurate but may have some minor discrepancies.'}
+              {validationAccuracy === 'Low' && 'The extracted data has significant discrepancies and should be reviewed carefully.'}
+            </Box>
+            <details>
+              <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>
+                View detailed validation report
+              </summary>
+              <Box margin={{ top: 's' }}>
+                <Textarea
+                  value={validationResult}
+                  readOnly
+                  rows={10}
+                  placeholder="Detailed validation feedback will appear here..."
+                />
+              </Box>
+            </details>
+          </SpaceBetween>
+        </Alert>
+      )} 
 
       <ColumnLayout columns={2} variant="text-grid">
         <SpaceBetween size="m">
@@ -647,64 +714,42 @@ Return only the JSON output.`
           </Container>
         </SpaceBetween>
 
-        <SpaceBetween size="m">
-          <Container header={<Header variant="h2">Bedrock Extraction Output</Header>}>
-            <FormField
-              description="Results from Amazon Bedrock document analysis"
-            >
-              {parsedJsonOutput ? (
-                <div style={{ 
-                  border: '1px solid #e1e4e8', 
-                  borderRadius: '4px', 
-                  padding: '12px',
-                  backgroundColor: '#f8f9fa',
-                  height: '600px',
-                  overflow: 'auto'
-                }}>
-                  <JsonViewer 
-                    value={parsedJsonOutput}
-                    theme="light"
-                    displayDataTypes={false}
-                    enableClipboard={true}
-                    rootName="extraction_result"
-                  />
-                </div>
-              ) : bedrockOutput ? (
-                <Textarea
-                  value={bedrockOutput}
-                  onChange={({ detail }) => setBedrockOutput(detail.value)}
-                  rows={15}
-                  placeholder="No extraction results yet. Upload a PDF and click Extract to see Bedrock output here."
+        <Container header={<Header variant="h2">Bedrock Extraction Output</Header>}>
+          <FormField
+            description="Results from Amazon Bedrock document analysis"
+          >
+            {parsedJsonOutput ? (
+              <div style={{ 
+                border: '1px solid #e1e4e8', 
+                borderRadius: '4px', 
+                padding: '12px',
+                backgroundColor: '#f8f9fa',
+                height: '1200px',
+                overflow: 'auto'
+              }}>
+                <JsonViewer 
+                  value={parsedJsonOutput}
+                  theme="light"
+                  displayDataTypes={false}
+                  enableClipboard={true}
+                  rootName="extraction_result"
                 />
-              ) : (
-                <Box textAlign="center" padding="l" color="text-status-inactive">
-                  <Box variant="strong">No extraction results yet</Box>
-                  <Box variant="p">Upload a PDF and click Extract to see Bedrock output here.</Box>
-                </Box>
-              )}
-            </FormField>
-          </Container>
-
-          <Container header={<Header variant="h2">Validation Results</Header>}>
-            <FormField
-              description="Validation of extracted data against the original document"
-            >
-              {validationResult ? (
-                <Textarea
-                  value={validationResult}
-                  onChange={({ detail }) => setValidationResult(detail.value)}
-                  rows={15}
-                  placeholder="No validation results yet. Click Validate after extraction to see validation report here."
-                />
-              ) : (
-                <Box textAlign="center" padding="l" color="text-status-inactive">
-                  <Box variant="strong">No validation results yet</Box>
-                  <Box variant="p">Click Validate after extraction to see validation report here.</Box>
-                </Box>
-              )}
-            </FormField>
-          </Container>
-        </SpaceBetween>
+              </div>
+            ) : bedrockOutput ? (
+              <Textarea
+                value={bedrockOutput}
+                onChange={({ detail }) => setBedrockOutput(detail.value)}
+                rows={30}
+                placeholder="No extraction results yet. Upload a PDF and click Extract to see Bedrock output here."
+              />
+            ) : (
+              <Box textAlign="center" padding="l" color="text-status-inactive">
+                <Box variant="strong">No extraction results yet</Box>
+                <Box variant="p">Upload a PDF and click Extract to see Bedrock output here.</Box>
+              </Box>
+            )}
+          </FormField>
+        </Container>
       </ColumnLayout>
 
 

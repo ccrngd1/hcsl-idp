@@ -246,15 +246,17 @@ Instructions:
 1. Compare each piece of information in the JSON against what you can see in the document
 2. Identify any discrepancies, missing information, or incorrect values
 3. Note any information in the document that wasn't captured in the JSON
-4. Provide an overall accuracy assessment
+4. Provide an overall accuracy assessment (must be exactly "High", "Medium", or "Low")
 5. Give specific recommendations for corrections if needed
 
 Please provide your validation in the following format:
-- Overall Accuracy: [High/Medium/Low]
+- Overall Accuracy: [High/Medium/Low] (use exactly one of these three words)
 - Discrepancies Found: [List any incorrect information]
 - Missing Information: [List any important information not captured]
 - Recommendations: [Specific suggestions for improvement]
-- Validation Summary: [Brief overall assessment]"""
+- Validation Summary: [Brief overall assessment]
+
+IMPORTANT: Start your response with "Overall Accuracy: High", "Overall Accuracy: Medium", or "Overall Accuracy: Low" so the system can properly categorize the results."""
 
             # Send PDF document and JSON to Bedrock for validation
             message_content = [
