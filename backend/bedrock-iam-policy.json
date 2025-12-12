@@ -1,0 +1,28 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "BedrockInvokeModel",
+            "Effect": "Allow",
+            "Action": [
+                "bedrock:InvokeModel",
+                "bedrock:InvokeModelWithResponseStream"
+            ],
+            "Resource": [
+                "arn:aws:bedrock:*::foundation-model/anthropic.*",
+                "arn:aws:bedrock:*::foundation-model/us.anthropic.*",
+                "arn:aws:bedrock:*::foundation-model/amazon.*",
+                "arn:aws:bedrock:*::foundation-model/us.amazon.*"
+            ]
+        },
+        {
+            "Sid": "BedrockListModels",
+            "Effect": "Allow",
+            "Action": [
+                "bedrock:ListFoundationModels",
+                "bedrock:GetFoundationModel"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
