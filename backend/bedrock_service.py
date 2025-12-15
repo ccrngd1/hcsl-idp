@@ -363,6 +363,153 @@ IMPORTANT: Start your response with "Overall Accuracy: High", "Overall Accuracy:
             else:
                 raise HTTPException(status_code=500, detail=f"Bedrock validation failed: {str(e)}")
 
+    async def chat_with_document(
+        self,
+        pdf_content: bytes,
+        message: str,
+        chat_history: list,
+        model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0",
+        hyperparameters: Optional[Dict[str, Any]] = None,
+        filename: str = "benefit_document.pdf"
+    ) -> Dict[str, Any]:
+        """
+        Chat with PDF document using AWS Bedrock Converse API
+        
+        Args:
+            pdf_content: Raw PDF file content as bytes
+            message: User's current message
+            chat_history: List of previous chat messages
+            model_id: Bedrock model identifier
+            hyperparameters: Model configuration parameters
+            filename: Original filename for reference
+            
+        Returns:
+            Dictionary containing chat response and metadata
+        """
+        try:
+            # Default hyperparameters
+            if hyperparameters is None:
+                hyperparameters = {
+                    "temperature": 0.7  # Slightly higher for conversational responses
+                }
+
+            # Prepare document content
+            document_data = self.prepare_document_for_bedrock(pdf_content, filename)
+            
+            # Build conversation messages
+            messages = []
+            
+            # Add chat history
+            for chat_msg in chat_history:
+                messages.append({
+                    "role": chat_msg["role"],
+                    "content": [{"text": chat_msg["content"]}]
+                })
+            
+            # Add current user message with document context
+            current_message_content = [
+                {
+                    "text": f"""You are an AI assistant helping users understand and analyze documents. The user has uploaded a document and wants to chat about it.
+
+Current user question: {message}
+
+Please provide a helpful, accurate response based on the document content. If the question cannot be answered from the document, let the user know that the information is not available in the provided document."""
+                },
+                {
+                    "document": {
+                        "format": "pdf",
+                        "name": document_data['sanitized_filename'],
+                        "source": {
+                            "bytes": base64.b64decode(document_data['pdf_base64'])
+                        }
+                    }
+                }
+            ]
+            
+            messages.append({
+                "role": "user",
+                "content": current_message_content
+            })
+
+            # Prepare the converse API request
+            converse_request = {
+                "modelId": model_id,
+                "messages": messages,
+                "inferenceConfig": {
+                    "temperature": hyperparameters.get("temperature", 0.7)
+                }
+            }
+
+            logger.info(f"Calling Bedrock Converse API for chat with model: {model_id}")
+            
+            # Log the request details (excluding the actual PDF bytes for brevity)
+            request_log = {
+                "modelId": model_id,
+                "messages_count": len(messages),
+                "current_message": message,
+                "chat_history_length": len(chat_history),
+                "document_name": document_data['sanitized_filename'],
+                "document_format": "pdf",
+                "document_size_bytes": len(pdf_content),
+                "inference_config": {
+                    "temperature": hyperparameters.get("temperature", 0.7)
+                }
+            }
+            print("=" * 80)
+            print("BEDROCK CHAT REQUEST:")
+            print(json.dumps(request_log, indent=2))
+            print("=" * 80)
+            
+            # Call Bedrock Converse API
+            response = self.bedrock_client.converse(**converse_request)
+            
+            # Log the full response
+            print("BEDROCK CHAT RESPONSE:")
+            print(json.dumps(response, indent=2, default=str))
+            print("=" * 80)
+            
+            # Extract the response content
+            output_message = response['output']['message']
+            response_content = output_message['content'][0]['text']
+            
+            # Log just the response content for easy reading
+            print("CHAT RESPONSE CONTENT:")
+            print(response_content)
+            print("=" * 80)
+            
+            # Parse usage metrics
+            usage = response.get('usage', {})
+            
+            result = {
+                "success": True,
+                "response": response_content,
+                "model_used": model_id,
+                "usage_metrics": {
+                    "input_tokens": usage.get('inputTokens', 0),
+                    "output_tokens": usage.get('outputTokens', 0),
+                    "total_tokens": usage.get('totalTokens', 0)
+                },
+                "hyperparameters_used": hyperparameters
+            }
+            
+            logger.info(f"Successfully processed chat message. Output tokens: {usage.get('outputTokens', 0)}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Bedrock chat processing failed: {str(e)}")
+            
+            # Handle specific AWS errors
+            if "ValidationException" in str(e):
+                raise HTTPException(status_code=400, detail=f"Invalid request parameters: {str(e)}")
+            elif "AccessDeniedException" in str(e):
+                raise HTTPException(status_code=403, detail="Access denied. Check IAM permissions for Bedrock.")
+            elif "ThrottlingException" in str(e):
+                raise HTTPException(status_code=429, detail="Request throttled. Please try again later.")
+            elif "ModelNotReadyException" in str(e):
+                raise HTTPException(status_code=503, detail=f"Model {model_id} is not ready. Try again later.")
+            else:
+                raise HTTPException(status_code=500, detail=f"Bedrock chat processing failed: {str(e)}")
+
     def get_available_models(self) -> Dict[str, Any]:
         """
         Get list of available Bedrock models for document processing

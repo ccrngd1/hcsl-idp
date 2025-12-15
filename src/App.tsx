@@ -3,6 +3,7 @@ import { AppLayout, TopNavigation, SideNavigation } from '@cloudscape-design/com
 import Dashboard from './pages/Dashboard'
 import BenefitDocAll from './pages/BenefitDocAll'
 import BenefitDocDeductible from './pages/BenefitDocDeductible'
+import DataReportAll from './pages/DataReportAll'
 import QueryBenefitDoc from './pages/QueryBenefitDoc'
 import { useState } from 'react'
 
@@ -26,6 +27,11 @@ function AppContent() {
           type: 'link' as const,
           text: 'Benefit doc - deductible',
           href: '/automated-extractions/benefit-doc-deductible'
+        },
+        {
+          type: 'link' as const,
+          text: 'Data Report - all',
+          href: '/automated-extractions/data-report-all'
         }
       ]
     },
@@ -80,6 +86,7 @@ function AppContent() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/automated-extractions/benefit-doc-all" element={<BenefitDocAll />} />
             <Route path="/automated-extractions/benefit-doc-deductible" element={<BenefitDocDeductible />} />
+            <Route path="/automated-extractions/data-report-all" element={<DataReportAll />} />
             <Route path="/document-query/query-benefit-doc" element={<QueryBenefitDoc />} />
           </Routes>
         }

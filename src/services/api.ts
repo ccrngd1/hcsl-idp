@@ -86,5 +86,27 @@ export const bedrockService = {
   async testConnection() {
     const response = await bedrockApi.post('/bedrock/test-connection')
     return response.data
+  },
+
+  async chatWithDocument(
+    pdfFile: File,
+    message: string,
+    chatHistory: Array<{ role: string; content: string; timestamp: string }>,
+    modelId: string = "anthropic.claude-3-sonnet-20240229-v1:0",
+    hyperparameters: { temperature: number } = { temperature: 0.7 }
+  ) {
+    const formData = new FormData()
+    formData.append('pdf_file', pdfFile)
+    formData.append('message', message)
+    formData.append('chat_history', JSON.stringify(chatHistory))
+    formData.append('model_id', modelId)
+    formData.append('hyperparameters', JSON.stringify(hyperparameters))
+
+    const response = await bedrockApi.post('/bedrock/chat', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data
   }
 }

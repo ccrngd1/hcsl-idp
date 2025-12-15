@@ -57,6 +57,25 @@ class BedrockValidationResponse(BaseModel):
     document_info: Dict[str, Any]
     processing_time_seconds: Optional[float] = None
 
+class ChatMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+    timestamp: datetime
+
+class ChatRequest(BaseModel):
+    message: str
+    chat_history: List[ChatMessage]
+    model_id: Optional[str] = "anthropic.claude-3-sonnet-20240229-v1:0"
+    hyperparameters: Optional[Dict[str, Any]] = None
+
+class ChatResponse(BaseModel):
+    success: bool
+    response: str
+    model_used: str
+    usage_metrics: Dict[str, int]
+    hyperparameters_used: Dict[str, Any]
+    processing_time_seconds: Optional[float] = None
+
 # In-memory storage (replace with database in production)
 items_db = {}
 
@@ -218,6 +237,53 @@ async def test_bedrock_connection():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bedrock connection failed: {str(e)}")
+
+@app.post("/api/bedrock/chat", response_model=ChatResponse)
+async def chat_with_document(
+    pdf_file: UploadFile = File(...),
+    message: str = Form(...),
+    chat_history: str = Form("[]"),
+    model_id: str = Form("anthropic.claude-3-sonnet-20240229-v1:0"),
+    hyperparameters: str = Form("{}")
+):
+    """
+    Chat with PDF document using AWS Bedrock
+    """
+    # Validate file type
+    if pdf_file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    
+    try:
+        # Parse inputs
+        hyperparams = json.loads(hyperparameters) if hyperparameters else {}
+        history = json.loads(chat_history) if chat_history else []
+        
+        # Read PDF content
+        pdf_content = await pdf_file.read()
+        
+        # Record start time
+        start_time = datetime.now()
+        
+        # Process with Bedrock
+        result = await bedrock_service.chat_with_document(
+            pdf_content=pdf_content,
+            message=message,
+            chat_history=history,
+            model_id=model_id,
+            hyperparameters=hyperparams,
+            filename=pdf_file.filename or "document.pdf"
+        )
+        
+        # Calculate processing time
+        processing_time = (datetime.now() - start_time).total_seconds()
+        result["processing_time_seconds"] = processing_time
+        
+        return ChatResponse(**result)
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON format")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chat processing failed: {str(e)}")
 
 # Health check endpoint
 @app.get("/health")
