@@ -252,6 +252,12 @@ Return only the JSON output.`
   const [hasExtracted, setHasExtracted] = useState(false)
   const [validationAccuracy, setValidationAccuracy] = useState<'High' | 'Medium' | 'Low' | null>(null)
   const [showValidationAlert, setShowValidationAlert] = useState(false)
+  
+  // Fix prompts state
+  const [fixingPrompts, setFixingPrompts] = useState(false)
+  
+  // Update extraction state
+  const [updatingExtraction, setUpdatingExtraction] = useState(false)
 
   // LLM Configuration State
   const [selectedModel, setSelectedModel] = useState<ModelOption | null>(null)
@@ -444,6 +450,200 @@ Return only the JSON output.`
     }
   }
 
+  const handleFixPrompts = async () => {
+    if (!selectedModel) {
+      alert('Please select a model first')
+      return
+    }
+
+    if (!validationResult) {
+      alert('Please run validation first to get feedback')
+      return
+    }
+
+    setFixingPrompts(true)
+
+    try {
+      // Combine instructions and schema into the original prompt
+      const originalPrompt = `${promptInstructions}\n\n${jsonSchema}`
+      
+      // Prepare hyperparameters
+      const hyperparameters = {
+        temperature: parseFloat(temperature)
+      }
+
+      // Debug logging
+      console.log('Fix prompts request:', {
+        originalPrompt: originalPrompt.substring(0, 100) + '...',
+        validationResult: validationResult.substring(0, 100) + '...',
+        modelId: selectedModel.value,
+        hyperparameters
+      })
+
+      // Call the fix prompt API
+      const result = await bedrockService.fixPrompt(
+        originalPrompt,
+        validationResult,
+        selectedModel.value,
+        hyperparameters
+      )
+      
+      // Parse the fixed prompt back into instructions and schema
+      const fixedPrompt = result.fixed_prompt
+      
+      // Try to split the fixed prompt back into instructions and schema
+      // Look for JSON schema pattern
+      const jsonSchemaMatch = fixedPrompt.match(/\{[\s\S]*\}$/m)
+      
+      let newInstructions = ''
+      let newSchema = ''
+      
+      if (jsonSchemaMatch) {
+        // Found JSON schema, split accordingly
+        const schemaStart = fixedPrompt.indexOf(jsonSchemaMatch[0])
+        newInstructions = fixedPrompt.substring(0, schemaStart).trim()
+        newSchema = jsonSchemaMatch[0]
+        
+        setPromptInstructions(newInstructions)
+        setJsonSchema(newSchema)
+      } else {
+        // No clear JSON schema found, put everything in instructions
+        newInstructions = fixedPrompt
+        newSchema = jsonSchema // Keep existing schema
+        
+        setPromptInstructions(newInstructions)
+      }
+      
+      // Save to session storage with the new values
+      sessionStorage.setItem('deductibleExtractionInstructions', newInstructions)
+      sessionStorage.setItem('deductibleExtractionSchema', newSchema)
+      
+      alert('Prompts have been fixed based on the validation feedback!')
+
+    } catch (error) {
+      console.error('Fix prompts failed - Full error object:', error)
+      
+      let errorMessage = 'Unknown error occurred'
+      
+      if (error instanceof Error) {
+        errorMessage = error.message
+        console.error('Error message:', error.message)
+        console.error('Error stack:', error.stack)
+      }
+      
+      // If it's an axios error, get more details
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as any
+        console.error('Axios error response:', axiosError.response)
+        console.error('Axios error status:', axiosError.response?.status)
+        console.error('Axios error data:', axiosError.response?.data)
+        
+        if (axiosError.response?.data?.detail) {
+          errorMessage = `Backend error: ${axiosError.response.data.detail}`
+        } else if (axiosError.response?.statusText) {
+          errorMessage = `HTTP ${axiosError.response.status}: ${axiosError.response.statusText}`
+        }
+      }
+      
+      alert(`Failed to fix prompts: ${errorMessage}`)
+    } finally {
+      setFixingPrompts(false)
+    }
+  }
+
+  const handleUpdateExtraction = async () => {
+    if (!selectedPdfFile) {
+      alert('Please upload a PDF file first')
+      return
+    }
+
+    if (!bedrockOutput) {
+      alert('Please extract data first before updating')
+      return
+    }
+
+    if (!validationResult) {
+      alert('Please run validation first to get feedback')
+      return
+    }
+
+    if (!selectedModel) {
+      alert('Please select a model first')
+      return
+    }
+
+    setUpdatingExtraction(true)
+
+    try {
+      // Prepare hyperparameters
+      const hyperparameters = {
+        temperature: parseFloat(temperature)
+      }
+
+      // Call the update extraction API
+      const result = await bedrockService.updateExtraction(
+        selectedPdfFile,
+        bedrockOutput,
+        validationResult,
+        selectedModel.value,
+        hyperparameters
+      )
+      
+      // Display the updated extraction results
+      const outputText = `${result.extracted_content}`
+      setBedrockOutput(outputText)
+
+      // Try to parse JSON for the viewer
+      try {
+        // Clean the content by removing markdown code blocks
+        let cleanedContent = result.extracted_content.trim()
+        
+        // Remove markdown code blocks (```json, ```JSON, or just ```)
+        cleanedContent = cleanedContent.replace(/^```(?:json|JSON)?\s*\n?/i, '')
+        cleanedContent = cleanedContent.replace(/\n?```\s*$/i, '')
+        cleanedContent = cleanedContent.trim()
+        
+        const jsonData = JSON.parse(cleanedContent)
+        setParsedJsonOutput(jsonData)
+        console.log('Successfully parsed updated JSON from Bedrock output')
+      } catch (parseError) {
+        console.log('Could not parse updated extraction as JSON, showing raw text:', parseError)
+        setParsedJsonOutput(null)
+      }
+
+      // Clear validation state since we have new extraction
+      setValidationResult('')
+      setValidationAccuracy(null)
+      setShowValidationAlert(false)
+      
+      alert('Extraction has been updated based on the validation feedback!')
+
+    } catch (error) {
+      console.error('Update extraction failed:', error)
+      
+      let errorMessage = 'Unknown error occurred'
+      
+      if (error instanceof Error) {
+        errorMessage = error.message
+      }
+      
+      // If it's an axios error, get more details
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as any
+        
+        if (axiosError.response?.data?.detail) {
+          errorMessage = `Backend error: ${axiosError.response.data.detail}`
+        } else if (axiosError.response?.statusText) {
+          errorMessage = `HTTP ${axiosError.response.status}: ${axiosError.response.statusText}`
+        }
+      }
+      
+      alert(`Failed to update extraction: ${errorMessage}`)
+    } finally {
+      setUpdatingExtraction(false)
+    }
+  }
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     console.log('handleFileUpload called')
     const file = event.target.files?.[0]
@@ -572,6 +772,27 @@ Return only the JSON output.`
           dismissible
           onDismiss={() => setShowValidationAlert(false)}
           header={`Validation Complete - ${validationAccuracy} Accuracy`}
+          action={
+            (validationAccuracy === 'Medium' || validationAccuracy === 'Low') ? (
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button
+                  onClick={handleFixPrompts}
+                  loading={fixingPrompts}
+                  iconName="settings"
+                >
+                  {fixingPrompts ? 'Fixing prompts...' : 'Fix prompts'}
+                </Button>
+                <Button
+                  onClick={handleUpdateExtraction}
+                  loading={updatingExtraction}
+                  iconName="refresh"
+                  variant="primary"
+                >
+                  {updatingExtraction ? 'Updating extraction...' : 'Update Extraction'}
+                </Button>
+              </SpaceBetween>
+            ) : undefined
+          }
         >
           <SpaceBetween size="s">
             <Box>

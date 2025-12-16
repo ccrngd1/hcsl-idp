@@ -108,5 +108,46 @@ export const bedrockService = {
       },
     })
     return response.data
+  },
+
+  async fixPrompt(
+    originalPrompt: string,
+    feedback: string,
+    modelId: string,
+    hyperparameters: {
+      temperature: number
+    }
+  ) {
+    const response = await bedrockApi.post('/bedrock/fix-prompt', {
+      original_prompt: originalPrompt,
+      feedback: feedback,
+      model_id: modelId,
+      hyperparameters: hyperparameters
+    })
+    return response.data
+  },
+
+  async updateExtraction(
+    file: File,
+    extractedJson: string,
+    validationFeedback: string,
+    modelId: string,
+    hyperparameters: {
+      temperature: number
+    }
+  ) {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('extracted_json', extractedJson)
+    formData.append('validation_feedback', validationFeedback)
+    formData.append('model_id', modelId)
+    formData.append('hyperparameters', JSON.stringify(hyperparameters))
+
+    const response = await bedrockApi.post('/bedrock/update-extraction', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data
   }
 }

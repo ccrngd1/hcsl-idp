@@ -76,6 +76,29 @@ class ChatResponse(BaseModel):
     hyperparameters_used: Dict[str, Any]
     processing_time_seconds: Optional[float] = None
 
+class FixPromptRequest(BaseModel):
+    original_prompt: str
+    feedback: str
+    model_id: Optional[str] = "anthropic.claude-3-sonnet-20240229-v1:0"
+    hyperparameters: Optional[Dict[str, Any]] = None
+
+class FixPromptResponse(BaseModel):
+    success: bool
+    fixed_prompt: str
+    model_used: str
+    usage_metrics: Dict[str, int]
+    hyperparameters_used: Dict[str, Any]
+    processing_time_seconds: Optional[float] = None
+
+class UpdateExtractionResponse(BaseModel):
+    success: bool
+    extracted_content: str
+    model_used: str
+    usage_metrics: Dict[str, int]
+    hyperparameters_used: Dict[str, Any]
+    document_info: Dict[str, Any]
+    processing_time_seconds: Optional[float] = None
+
 # In-memory storage (replace with database in production)
 items_db = {}
 
@@ -326,6 +349,81 @@ async def chat_with_document(
         raise HTTPException(status_code=400, detail="Invalid JSON format")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chat processing failed: {str(e)}")
+
+@app.post("/api/bedrock/fix-prompt", response_model=FixPromptResponse)
+async def fix_prompt(request: FixPromptRequest):
+    """
+    Fix prompt based on validation feedback using AWS Bedrock
+    """
+    try:
+        # Record start time
+        start_time = datetime.now()
+        
+        # Process with Bedrock
+        result = await bedrock_service.fix_prompt_with_bedrock(
+            original_prompt=request.original_prompt,
+            feedback=request.feedback,
+            model_id=request.model_id,
+            hyperparameters=request.hyperparameters or {}
+        )
+        
+        # Calculate processing time
+        processing_time = (datetime.now() - start_time).total_seconds()
+        result["processing_time_seconds"] = processing_time
+        
+        return FixPromptResponse(**result)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prompt fixing failed: {str(e)}")
+
+@app.post("/api/bedrock/update-extraction", response_model=UpdateExtractionResponse)
+async def update_extraction(
+    file: UploadFile = File(...),
+    extracted_json: str = Form(...),
+    validation_feedback: str = Form(...),
+    model_id: str = Form("us.anthropic.claude-3-7-sonnet-20250219-v1:0"),
+    hyperparameters: str = Form("{}")
+):
+    """
+    Update extracted JSON based on validation feedback using AWS Bedrock
+    """
+    # Validate file type (currently only PDF supported for this feature)
+    if file.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=400, 
+            detail="Only PDF files are supported for extraction updates"
+        )
+    
+    try:
+        # Parse hyperparameters
+        hyperparams = json.loads(hyperparameters) if hyperparameters else {}
+        
+        # Read file content
+        file_content = await file.read()
+        
+        # Record start time
+        start_time = datetime.now()
+        
+        # Update extraction with Bedrock
+        result = await bedrock_service.update_extraction_with_bedrock(
+            pdf_content=file_content,
+            extracted_json=extracted_json,
+            validation_feedback=validation_feedback,
+            model_id=model_id,
+            hyperparameters=hyperparams,
+            filename=file.filename or "document.pdf"
+        )
+        
+        # Calculate processing time
+        processing_time = (datetime.now() - start_time).total_seconds()
+        result["processing_time_seconds"] = processing_time
+        
+        return UpdateExtractionResponse(**result)
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid hyperparameters JSON format")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Extraction update failed: {str(e)}")
 
 # Health check endpoint
 @app.get("/health")

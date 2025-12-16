@@ -854,6 +854,328 @@ IMPORTANT: Start your response with "Overall Accuracy: High", "Overall Accuracy:
             else:
                 raise HTTPException(status_code=500, detail=f"Bedrock spreadsheet validation failed: {str(e)}")
 
+    async def fix_prompt_with_bedrock(
+        self,
+        original_prompt: str,
+        feedback: str,
+        model_id: str = "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        hyperparameters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Fix prompt based on validation feedback using AWS Bedrock
+        
+        Args:
+            original_prompt: The original prompt that needs fixing
+            feedback: Validation feedback indicating what needs to be improved
+            model_id: Bedrock model identifier
+            hyperparameters: Model configuration parameters
+            
+        Returns:
+            Dictionary containing the fixed prompt and metadata
+        """
+        try:
+            # Debug logging for input parameters
+            print("=" * 80)
+            print("FIX PROMPT INPUT PARAMETERS:")
+            print(f"Model ID: {model_id}")
+            print(f"Original prompt length: {len(original_prompt)}")
+            print(f"Feedback length: {len(feedback)}")
+            print(f"Hyperparameters: {hyperparameters}")
+            print(f"Original prompt preview: {original_prompt[:200]}...")
+            print(f"Feedback preview: {feedback[:200]}...")
+            print("=" * 80)
+            
+            # Default hyperparameters
+            if hyperparameters is None:
+                hyperparameters = {
+                    "temperature": 0.1
+                }
+
+            # Create the prompt fixing instruction
+            fix_prompt_instruction = f"""Fix the following prompt based on the feedback below.
+
+Original prompt:
+{original_prompt}
+
+Feedback:
+{feedback}
+
+Instructions:
+1. Analyze the feedback to understand what issues were identified
+2. Modify the original prompt to address the specific problems mentioned
+3. Improve clarity, specificity, and accuracy of the prompt
+4. Ensure the fixed prompt will produce better extraction results
+5. Maintain the overall structure and intent of the original prompt
+6. Return only the improved prompt without additional explanation
+
+Please provide the fixed prompt:"""
+
+            # Prepare the converse API request
+            converse_request = {
+                "modelId": model_id,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "text": fix_prompt_instruction
+                            }
+                        ]
+                    }
+                ],
+                "inferenceConfig": {
+                    "temperature": hyperparameters.get("temperature", 0.1)
+                }
+            }
+
+            logger.info(f"Calling Bedrock Converse API for prompt fixing with model: {model_id}")
+            
+            # Log the request details
+            request_log = {
+                "modelId": model_id,
+                "message_role": "user",
+                "action": "fix_prompt",
+                "original_prompt_length": len(original_prompt),
+                "feedback_length": len(feedback),
+                "inference_config": {
+                    "temperature": hyperparameters.get("temperature", 0.1)
+                }
+            }
+            print("=" * 80)
+            print("BEDROCK PROMPT FIX REQUEST:")
+            print(json.dumps(request_log, indent=2))
+            print("=" * 80)
+            
+            # Call Bedrock Converse API
+            response = self.bedrock_client.converse(**converse_request)
+            
+            # Log the full response
+            print("BEDROCK PROMPT FIX RESPONSE:")
+            print(json.dumps(response, indent=2, default=str))
+            print("=" * 80)
+            
+            # Extract the response content
+            output_message = response['output']['message']
+            fixed_prompt = output_message['content'][0]['text']
+            
+            # Log just the fixed prompt for easy reading
+            print("FIXED PROMPT:")
+            print(fixed_prompt)
+            print("=" * 80)
+            
+            # Parse usage metrics
+            usage = response.get('usage', {})
+            
+            result = {
+                "success": True,
+                "fixed_prompt": fixed_prompt,
+                "model_used": model_id,
+                "usage_metrics": {
+                    "input_tokens": usage.get('inputTokens', 0),
+                    "output_tokens": usage.get('outputTokens', 0),
+                    "total_tokens": usage.get('totalTokens', 0)
+                },
+                "hyperparameters_used": hyperparameters
+            }
+            
+            logger.info(f"Successfully fixed prompt. Output tokens: {usage.get('outputTokens', 0)}")
+            return result
+
+        except Exception as e:
+            import traceback
+            error_msg = str(e)
+            error_traceback = traceback.format_exc()
+            
+            logger.error(f"Bedrock prompt fixing failed: {error_msg}")
+            logger.error(f"Full traceback: {error_traceback}")
+            print("=" * 80)
+            print("PROMPT FIXING ERROR DETAILS:")
+            print(f"Error message: {error_msg}")
+            print(f"Error type: {type(e)}")
+            print(f"Error repr: {repr(e)}")
+            print(f"Model ID used: {model_id}")
+            print(f"Original prompt length: {len(original_prompt) if 'original_prompt' in locals() else 'N/A'}")
+            print(f"Feedback length: {len(feedback) if 'feedback' in locals() else 'N/A'}")
+            print(f"Full traceback:\n{error_traceback}")
+            print("=" * 80)
+            
+            # Handle specific AWS errors
+            if "ValidationException" in error_msg:
+                raise HTTPException(status_code=400, detail=f"Bedrock ValidationException: {error_msg}")
+            elif "AccessDeniedException" in error_msg:
+                raise HTTPException(status_code=403, detail=f"Bedrock AccessDenied: Check IAM permissions. Error: {error_msg}")
+            elif "ThrottlingException" in error_msg:
+                raise HTTPException(status_code=429, detail=f"Bedrock Throttling: Request throttled. Error: {error_msg}")
+            elif "ModelNotReadyException" in error_msg:
+                raise HTTPException(status_code=503, detail=f"Bedrock ModelNotReady: Model {model_id} is not ready. Error: {error_msg}")
+            elif "ResourceNotFoundException" in error_msg:
+                raise HTTPException(status_code=404, detail=f"Bedrock ResourceNotFound: Model {model_id} not found in region. Error: {error_msg}")
+            elif "ServiceException" in error_msg:
+                raise HTTPException(status_code=500, detail=f"Bedrock ServiceException: {error_msg}")
+            else:
+                raise HTTPException(status_code=500, detail=f"Bedrock prompt fixing failed - {type(e).__name__}: {error_msg}")
+
+    async def update_extraction_with_bedrock(
+        self,
+        pdf_content: bytes,
+        extracted_json: str,
+        validation_feedback: str,
+        model_id: str = "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        hyperparameters: Optional[Dict[str, Any]] = None,
+        filename: str = "benefit_document.pdf"
+    ) -> Dict[str, Any]:
+        """
+        Update extracted JSON based on validation feedback using AWS Bedrock
+        
+        Args:
+            pdf_content: Raw PDF file content as bytes
+            extracted_json: The original extracted JSON string
+            validation_feedback: Validation feedback indicating what needs to be corrected
+            model_id: Bedrock model identifier
+            hyperparameters: Model configuration parameters
+            filename: Original filename for reference
+            
+        Returns:
+            Dictionary containing updated extraction results and metadata
+        """
+        try:
+            # Default hyperparameters
+            if hyperparameters is None:
+                hyperparameters = {
+                    "temperature": 0.1
+                }
+
+            # Prepare document content
+            document_data = self.prepare_document_for_bedrock(pdf_content, filename)
+            
+            # Create update prompt
+            update_prompt = f"""Given this file and the extracted JSON: {extracted_json} apply all fixes identified in this feedback: {validation_feedback}
+
+Please review the document and the extracted JSON data below, then provide an updated JSON that addresses all the issues mentioned in the feedback.
+
+Original extracted JSON:
+{extracted_json}
+
+Validation feedback to address:
+{validation_feedback}
+
+Instructions:
+1. Carefully review the document to understand the correct information
+2. Apply all corrections mentioned in the validation feedback
+3. Fix any discrepancies, missing information, or incorrect values
+4. Ensure all data matches what is actually shown in the document
+5. Return only the corrected JSON without additional explanation
+6. Maintain the same JSON structure as the original
+
+Please provide the updated JSON:"""
+
+            # Send PDF document and update request to Bedrock
+            message_content = [
+                {
+                    "text": update_prompt
+                },
+                {
+                    "document": {
+                        "format": "pdf",
+                        "name": document_data['sanitized_filename'],
+                        "source": {
+                            "bytes": base64.b64decode(document_data['pdf_base64'])
+                        }
+                    }
+                }
+            ]
+
+            # Prepare the converse API request
+            converse_request = {
+                "modelId": model_id,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": message_content
+                    }
+                ],
+                "inferenceConfig": {
+                    "temperature": hyperparameters.get("temperature", 0.1)
+                }
+            }
+
+            logger.info(f"Calling Bedrock Converse API for extraction update with model: {model_id}")
+            
+            # Log the request details (excluding the actual PDF bytes for brevity)
+            request_log = {
+                "modelId": model_id,
+                "message_role": "user",
+                "action": "update_extraction",
+                "document_name": document_data['sanitized_filename'],
+                "document_format": "pdf",
+                "document_size_bytes": len(pdf_content),
+                "original_json_length": len(extracted_json),
+                "feedback_length": len(validation_feedback),
+                "inference_config": {
+                    "temperature": hyperparameters.get("temperature", 0.1)
+                }
+            }
+            print("=" * 80)
+            print("BEDROCK UPDATE EXTRACTION REQUEST:")
+            print(json.dumps(request_log, indent=2))
+            print("=" * 80)
+            
+            # Call Bedrock Converse API
+            response = self.bedrock_client.converse(**converse_request)
+            
+            # Log the full response
+            print("BEDROCK UPDATE EXTRACTION RESPONSE:")
+            print(json.dumps(response, indent=2, default=str))
+            print("=" * 80)
+            
+            # Extract the response content
+            output_message = response['output']['message']
+            updated_content = output_message['content'][0]['text']
+            
+            # Log just the updated content for easy reading
+            print("UPDATED EXTRACTION CONTENT:")
+            print(updated_content)
+            print("=" * 80)
+            
+            # Parse usage metrics
+            usage = response.get('usage', {})
+            
+            result = {
+                "success": True,
+                "extracted_content": updated_content,
+                "model_used": model_id,
+                "usage_metrics": {
+                    "input_tokens": usage.get('inputTokens', 0),
+                    "output_tokens": usage.get('outputTokens', 0),
+                    "total_tokens": usage.get('totalTokens', 0)
+                },
+                "hyperparameters_used": hyperparameters,
+                "document_info": {
+                    "pdf_size_bytes": len(pdf_content),
+                    "original_json_length": len(extracted_json),
+                    "feedback_length": len(validation_feedback),
+                    "has_pdf_content": True
+                }
+            }
+            
+            logger.info(f"Successfully updated extraction. Output tokens: {usage.get('outputTokens', 0)}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Bedrock extraction update failed: {str(e)}")
+            
+            # Handle specific AWS errors
+            if "ValidationException" in str(e):
+                raise HTTPException(status_code=400, detail=f"Invalid request parameters: {str(e)}")
+            elif "AccessDeniedException" in str(e):
+                raise HTTPException(status_code=403, detail="Access denied. Check IAM permissions for Bedrock.")
+            elif "ThrottlingException" in str(e):
+                raise HTTPException(status_code=429, detail="Request throttled. Please try again later.")
+            elif "ModelNotReadyException" in str(e):
+                raise HTTPException(status_code=503, detail=f"Model {model_id} is not ready. Try again later.")
+            else:
+                raise HTTPException(status_code=500, detail=f"Bedrock extraction update failed: {str(e)}")
+
     def get_available_models(self) -> Dict[str, Any]:
         """
         Get list of available Bedrock models for document processing
