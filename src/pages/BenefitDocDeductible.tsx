@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   Container,
   Header,
@@ -6,198 +6,753 @@ import {
   Button,
   Box,
   Alert,
-  Table,
-  Badge,
+  ProgressBar,
+  Textarea,
+  FormField,
   ColumnLayout,
-  KeyValuePairs
+  Select,
+  Input
 } from '@cloudscape-design/components'
+import { JsonViewer } from '@textea/json-viewer'
+import { bedrockService } from '../services/api'
 
-interface DeductibleInfo {
-  id: string
-  documentName: string
-  status: 'completed' | 'processing' | 'failed'
-  deductibleData: {
-    individualDeductible: string
-    familyDeductible: string
-    inNetworkDeductible: string
-    outOfNetworkDeductible: string
-    deductibleType: string
-    planYear: string
-  }
-  extractedAt: string
+interface ModelOption {
+  label: string
+  value: string
+  description?: string
 }
+
+
 
 export default function BenefitDocDeductible() {
   const [loading, setLoading] = useState(false)
-  const [deductibles, setDeductibles] = useState<DeductibleInfo[]>([
-    {
-      id: '1',
-      documentName: 'Health_Benefits_2024.pdf',
-      status: 'completed',
-      deductibleData: {
-        individualDeductible: '$1,500',
-        familyDeductible: '$3,000',
-        inNetworkDeductible: '$1,500',
-        outOfNetworkDeductible: '$3,500',
-        deductibleType: 'Calendar Year',
-        planYear: '2024'
-      },
-      extractedAt: '2024-12-10T10:30:00Z'
+  const [uploadingFile, setUploadingFile] = useState(false)
+  const [pdfLoading, setPdfLoading] = useState(false)
+  // Split the prompt into instructions and JSON schema
+  const [promptInstructions, setPromptInstructions] = useState(
+    sessionStorage.getItem('deductibleExtractionInstructions') || 
+    `Parse this health insurance benefit document into the following JSON structure.
+
+Return only the JSON output.`
+  )
+  
+  const [jsonSchema, setJsonSchema] = useState(
+    sessionStorage.getItem('deductibleExtractionSchema') || 
+    `{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["plan_info", "deductibles", "out_of_pocket_limits", "services"],
+  "properties": {
+    "plan_info": {
+      "type": "object",
+      "required": ["name", "type", "coverage_period", "coverage_level"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["PPO", "HMO", "EPO", "POS", "HDHP"] },
+        "coverage_period": {
+          "type": "object",
+          "required": ["start_date", "end_date"],
+          "properties": {
+            "start_date": { "type": "string", "format": "date" },
+            "end_date": { "type": "string", "format": "date" }
+          }
+        },
+        "coverage_level": { "type": "string" }
+      }
     },
-    {
-      id: '2',
-      documentName: 'PPO_Plan_Details.pdf',
-      status: 'completed',
-      deductibleData: {
-        individualDeductible: '$2,000',
-        familyDeductible: '$4,000',
-        inNetworkDeductible: '$2,000',
-        outOfNetworkDeductible: '$5,000',
-        deductibleType: 'Plan Year',
-        planYear: '2024'
-      },
-      extractedAt: '2024-12-09T14:20:00Z'
+    "deductibles": {
+      "type": "object",
+      "required": ["in_network", "out_of_network"],
+      "properties": {
+        "in_network": {
+          "type": "object",
+          "required": ["individual", "family"],
+          "properties": {
+            "individual": { "type": "number" },
+            "family": { "type": "number" }
+          }
+        },
+        "out_of_network": {
+          "type": "object",
+          "required": ["individual", "family"],
+          "properties": {
+            "individual": { "type": "number" },
+            "family": { "type": "number" }
+          }
+        }
+      }
+    },
+    "out_of_pocket_limits": {
+      "type": "object",
+      "required": ["in_network", "out_of_network"],
+      "properties": {
+        "in_network": {
+          "type": "object",
+          "required": ["individual", "family"],
+          "properties": {
+            "individual": { "type": "number" },
+            "family": { "type": "number" }
+          }
+        },
+        "out_of_network": {
+          "type": "object",
+          "required": ["individual", "family"],
+          "properties": {
+            "individual": { "type": "number" },
+            "family": { "type": "number" }
+          }
+        }
+      }
+    },
+    "services": {
+      "type": "object",
+      "properties": {
+        "primary_care": {
+          "type": "object",
+          "required": ["in_network", "out_of_network"],
+          "properties": {
+            "in_network": {
+              "type": "object",
+              "required": ["copay", "deductible_applies"],
+              "properties": {
+                "copay": { "type": "number" },
+                "deductible_applies": { "type": "boolean" }
+              }
+            },
+            "out_of_network": {
+              "type": "object",
+              "required": ["coinsurance", "deductible_applies"],
+              "properties": {
+                "coinsurance": { "type": "number" },
+                "deductible_applies": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "emergency_services": {
+      "type": "object",
+      "required": ["emergency_room", "emergency_medical_transportation", "urgent_care"],
+      "properties": {
+        "emergency_room": {
+          "type": "object",
+          "required": ["accident", "medical_emergency"],
+          "properties": {
+            "accident": {
+              "type": "object",
+              "required": ["copay", "deductible_applies"],
+              "properties": {
+                "copay": { "type": "number" },
+                "deductible_applies": { "type": "boolean" },
+                "notes": { "type": "string" }
+              }
+            },
+            "medical_emergency": {
+              "type": "object",
+              "required": ["copay", "deductible_applies"],
+              "properties": {
+                "copay": { "type": "number" },
+                "deductible_applies": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "hospital_stays": {
+      "type": "object",
+      "required": ["facility_fee", "physician_surgeon_fees"],
+      "properties": {
+        "facility_fee": {
+          "type": "object",
+          "required": ["in_network", "out_of_network", "limitations"],
+          "properties": {
+            "in_network": {
+              "type": "object",
+              "required": ["coinsurance", "deductible_applies"],
+              "properties": {
+                "coinsurance": { "type": "number" },
+                "deductible_applies": { "type": "boolean" }
+              }
+            },
+            "out_of_network": {
+              "type": "object",
+              "required": ["coinsurance", "deductible_applies"],
+              "properties": {
+                "coinsurance": { "type": "number" },
+                "deductible_applies": { "type": "boolean" }
+              }
+            },
+            "limitations": { "type": "string" }
+          }
+        }
+      }
+    },
+    "prescription_drugs": {
+      "type": "object",
+      "required": ["tier_1", "tier_2", "tier_3", "tier_4"],
+      "properties": {
+        "tier_1": {
+          "type": "object",
+          "required": ["retail_copay", "mail_order_copay", "deductible_applies"],
+          "properties": {
+            "retail_copay": { "type": "number" },
+            "mail_order_copay": { "type": "number" },
+            "deductible_applies": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "additional_limitations": {
+      "type": "object",
+      "properties": {
+        "rehabilitation_services": {
+          "type": "object",
+          "properties": {
+            "visit_limits": {
+              "type": "object",
+              "properties": {
+                "combined_maximum": { "type": "number" },
+                "services_included": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "special_provisions": { "type": "string" }
+              }
+            }
+          }
+        },
+        "precertification_required": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "network_restrictions": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "excluded_services": {
+      "type": "array",
+      "items": { "type": "string" }
     }
-  ])
+  }
+}`
+  )
+  const [bedrockOutput, setBedrockOutput] = useState('')
+  const [parsedJsonOutput, setParsedJsonOutput] = useState<any>(null)
+  const [selectedPdfUrl, setSelectedPdfUrl] = useState<string | null>(null)
+  const [selectedPdfFile, setSelectedPdfFile] = useState<File | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // Validation state
+  const [validating, setValidating] = useState(false)
+  const [validationResult, setValidationResult] = useState('')
+  const [hasExtracted, setHasExtracted] = useState(false)
+  const [validationAccuracy, setValidationAccuracy] = useState<'High' | 'Medium' | 'Low' | null>(null)
+  const [showValidationAlert, setShowValidationAlert] = useState(false)
 
-  const handleExtractDeductibles = async () => {
+  // LLM Configuration State
+  const [selectedModel, setSelectedModel] = useState<ModelOption | null>(null)
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
+  const [modelsLoading, setModelsLoading] = useState(true)
+  const [temperature, setTemperature] = useState('0.1')
+
+  // Load available models on component mount
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        setModelsLoading(true)
+        const modelsData = await bedrockService.getAvailableModels()
+        
+        // Transform backend model data to frontend format
+        const options: ModelOption[] = modelsData.text_models.map((model: any) => ({
+          label: model.name,
+          value: model.id,
+          description: model.description
+        }))
+        
+        setModelOptions(options)
+        
+        // Set default model (first one in the list)
+        if (options.length > 0) {
+          setSelectedModel(options[0])
+        }
+      } catch (error) {
+        console.error('Failed to load models:', error)
+        // Fallback to a basic model if API fails
+        const fallbackOptions: ModelOption[] = [
+          {
+            label: 'Claude 3 Sonnet',
+            value: 'anthropic.claude-3-sonnet-20240229-v1:0',
+            description: 'Fallback model'
+          }
+        ]
+        setModelOptions(fallbackOptions)
+        setSelectedModel(fallbackOptions[0])
+      } finally {
+        setModelsLoading(false)
+      }
+    }
+
+    loadModels()
+  }, [])
+
+
+  const handleExtractAll = async () => {
+    if (!selectedPdfFile) {
+      alert('Please upload a PDF file first')
+      return
+    }
+
+    if (!selectedModel) {
+      alert('Please select a model first')
+      return
+    }
+
+    // Save both parts to session storage
+    sessionStorage.setItem('deductibleExtractionInstructions', promptInstructions)
+    sessionStorage.setItem('deductibleExtractionSchema', jsonSchema)
+    
+    // Combine instructions and schema into a single prompt
+    const combinedPrompt = `${promptInstructions}\n\n${jsonSchema}`
+    
     setLoading(true)
-    // Simulate API call
-    setTimeout(() => {
-      setLoading(false)
-    }, 1500)
-  }
+    setBedrockOutput('Processing document with Bedrock...')
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return <Badge color="green">Completed</Badge>
-      case 'processing':
-        return <Badge color="blue">Processing</Badge>
-      case 'failed':
-        return <Badge color="red">Failed</Badge>
-      default:
-        return <Badge>Unknown</Badge>
+    try {
+      // Prepare hyperparameters
+      const hyperparameters = {
+        temperature: parseFloat(temperature)
+      }
+
+      // Call the backend API using the service with combined prompt
+      const result = await bedrockService.extractFromDocument(
+        selectedPdfFile,
+        combinedPrompt,
+        selectedModel.value,
+        hyperparameters
+      )
+      
+      // Display the extraction results
+      const outputText = `${result.extracted_content}`
+      setBedrockOutput(outputText)
+
+      // Try to parse JSON for the viewer
+      try {
+        // Clean the content by removing markdown code blocks
+        let cleanedContent = result.extracted_content.trim()
+        
+        // Remove markdown code blocks (```json, ```JSON, or just ```)
+        cleanedContent = cleanedContent.replace(/^```(?:json|JSON)?\s*\n?/i, '')
+        cleanedContent = cleanedContent.replace(/\n?```\s*$/i, '')
+        cleanedContent = cleanedContent.trim()
+        
+        const jsonData = JSON.parse(cleanedContent)
+        setParsedJsonOutput(jsonData)
+        setHasExtracted(true) // Enable validation button
+        console.log('Successfully parsed JSON from Bedrock output')
+      } catch (parseError) {
+        console.log('Could not parse as JSON, showing raw text:', parseError)
+        setParsedJsonOutput(null)
+        setHasExtracted(true) // Still enable validation even if JSON parsing failed
+      }
+
+    } catch (error) {
+      console.error('Extraction failed:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      setBedrockOutput(`Error: ${errorMessage}`)
+      setParsedJsonOutput(null)
+      setHasExtracted(false)
+    } finally {
+      setLoading(false)
     }
   }
+
+  // Function to parse accuracy from validation result
+  const parseValidationAccuracy = (validationText: string): 'High' | 'Medium' | 'Low' | null => {
+    const lowerText = validationText.toLowerCase()
+    if (lowerText.includes('overall accuracy: high') || lowerText.includes('accuracy: high')) {
+      return 'High'
+    } else if (lowerText.includes('overall accuracy: medium') || lowerText.includes('accuracy: medium')) {
+      return 'Medium'
+    } else if (lowerText.includes('overall accuracy: low') || lowerText.includes('accuracy: low')) {
+      return 'Low'
+    }
+    // Try to infer from other indicators
+    if (lowerText.includes('excellent') || lowerText.includes('accurate') || lowerText.includes('no discrepancies')) {
+      return 'High'
+    } else if (lowerText.includes('some discrepancies') || lowerText.includes('minor issues')) {
+      return 'Medium'
+    } else if (lowerText.includes('significant discrepancies') || lowerText.includes('major issues')) {
+      return 'Low'
+    }
+    return null
+  }
+
+  const handleValidate = async () => {
+    if (!selectedPdfFile) {
+      alert('Please upload a PDF file first')
+      return
+    }
+
+    if (!bedrockOutput) {
+      alert('Please extract data first before validating')
+      return
+    }
+
+    if (!selectedModel) {
+      alert('Please select a model first')
+      return
+    }
+
+    setValidating(true)
+    setValidationResult('Validating extraction with Bedrock...')
+    setShowValidationAlert(false)
+
+    try {
+      // Prepare hyperparameters
+      const hyperparameters = {
+        temperature: parseFloat(temperature)
+      }
+
+      // Call the validation API
+      const result = await bedrockService.validateExtraction(
+        selectedPdfFile,
+        bedrockOutput,
+        selectedModel.value,
+        hyperparameters
+      )
+      
+      // Display the validation results
+      setValidationResult(result.validation_result)
+      
+      // Parse accuracy and show alert
+      const accuracy = parseValidationAccuracy(result.validation_result)
+      setValidationAccuracy(accuracy)
+      setShowValidationAlert(true)
+
+    } catch (error) {
+      console.error('Validation failed:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      setValidationResult(`Validation Error: ${errorMessage}`)
+      setValidationAccuracy('Low')
+      setShowValidationAlert(true)
+    } finally {
+      setValidating(false)
+    }
+  }
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    console.log('handleFileUpload called')
+    const file = event.target.files?.[0]
+    console.log('Selected file:', file)
+    if (file && file.type === 'application/pdf') {
+      console.log('Starting file upload process...')
+      setUploadingFile(true)
+      
+      // Force a re-render by waiting for the next tick
+      await new Promise(resolve => setTimeout(resolve, 0))
+      console.log('uploadingFile should now be true')
+      
+      try {
+        // Add a longer delay to show loading state
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        
+        console.log('Creating PDF URL...')
+        // Create URL for PDF viewer
+        const pdfUrl = URL.createObjectURL(file)
+        
+        // Set these in sequence to ensure proper state updates
+        setSelectedPdfUrl(pdfUrl)
+        await new Promise(resolve => setTimeout(resolve, 0))
+        
+        setSelectedPdfFile(file)
+        await new Promise(resolve => setTimeout(resolve, 0))
+        
+        setPdfLoading(true) // Start PDF loading state
+        console.log('pdfLoading should now be true')
+        
+        // Clear previous output
+        setBedrockOutput('')
+        setParsedJsonOutput(null)
+        setHasExtracted(false)
+        setValidationResult('')
+        setValidationAccuracy(null)
+        setShowValidationAlert(false)
+        
+        console.log('PDF file loaded:', file.name, `(${(file.size / 1024 / 1024).toFixed(2)} MB)`)
+      } catch (error) {
+        console.error('Failed to load PDF:', error)
+        alert('Failed to load PDF file')
+      } finally {
+        console.log('Upload process complete, clearing uploadingFile state')
+        setUploadingFile(false)
+      }
+    } else {
+      alert('Please select a PDF file')
+    }
+  }
+
+  const handleUploadClick = () => {
+    console.log('Upload button clicked')
+    console.log('File input ref:', fileInputRef.current)
+    fileInputRef.current?.click()
+  }
+
+
+
+
 
   return (
     <SpaceBetween size="l">
       <Header
         variant="h1"
-        description="Extract deductible information from benefit documents"
+        description="Extract all benefit information from uploaded documents"
         actions={
-          <Button
-            variant="primary"
-            onClick={handleExtractDeductibles}
-            loading={loading}
-          >
-            Extract Deductibles
-          </Button>
+          <SpaceBetween direction="horizontal" size="xs">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              accept=".pdf"
+              style={{ display: 'none' }}
+            />
+            <Button
+              onClick={handleUploadClick}
+              iconName="upload"
+              loading={uploadingFile}
+            >
+              {uploadingFile ? 'Loading PDF...' : 'Upload PDF'}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleExtractAll}
+              loading={loading}
+            >
+              Extract All Benefits
+            </Button>
+            <Button
+              onClick={handleValidate}
+              loading={validating}
+              disabled={!hasExtracted}
+              iconName="check"
+            >
+              {validating ? 'Validating...' : 'Validate'}
+            </Button>
+          </SpaceBetween>
         }
       >
         Benefit Document - Deductible Extraction
       </Header>
 
-      <Alert type="info">
-        This specialized extraction focuses on deductible amounts, including individual, family, in-network, and out-of-network deductibles from benefit documents.
-      </Alert>
-
-      <Container>
-        <Table
-          columnDefinitions={[
-            {
-              id: 'document',
-              header: 'Document',
-              cell: (item: DeductibleInfo) => (
-                <SpaceBetween direction="horizontal" size="xs">
-                  <Box>{item.documentName}</Box>
-                  {getStatusBadge(item.status)}
-                </SpaceBetween>
-              )
-            },
-            {
-              id: 'individual',
-              header: 'Individual Deductible',
-              cell: (item: DeductibleInfo) => item.deductibleData.individualDeductible
-            },
-            {
-              id: 'family',
-              header: 'Family Deductible',
-              cell: (item: DeductibleInfo) => item.deductibleData.familyDeductible
-            },
-            {
-              id: 'in-network',
-              header: 'In-Network',
-              cell: (item: DeductibleInfo) => item.deductibleData.inNetworkDeductible
-            },
-            {
-              id: 'out-network',
-              header: 'Out-of-Network',
-              cell: (item: DeductibleInfo) => item.deductibleData.outOfNetworkDeductible
-            },
-            {
-              id: 'type',
-              header: 'Deductible Type',
-              cell: (item: DeductibleInfo) => item.deductibleData.deductibleType
-            }
-          ]}
-          items={deductibles}
-          loading={loading}
-          loadingText="Extracting deductible information..."
-          empty={
-            <Box textAlign="center" color="inherit">
-              <b>No deductible data available</b>
-              <Box padding={{ bottom: 's' }} variant="p" color="inherit">
-                Upload benefit documents to extract deductible information.
-              </Box>
-            </Box>
-          }
-          header={<Header>Deductible Extraction Results</Header>}
-        />
-      </Container>
-
-      {deductibles.length > 0 && (
+      {loading && (
         <Container>
-          <Header variant="h2">Deductible Summary</Header>
-          <ColumnLayout columns={2}>
-            <KeyValuePairs
-              columns={1}
-              items={[
-                {
-                  label: 'Total Documents Processed',
-                  value: deductibles.length.toString()
-                },
-                {
-                  label: 'Average Individual Deductible',
-                  value: '$1,750'
-                },
-                {
-                  label: 'Average Family Deductible',
-                  value: '$3,500'
-                }
-              ]}
-            />
-            <KeyValuePairs
-              columns={1}
-              items={[
-                {
-                  label: 'Lowest Individual Deductible',
-                  value: '$1,500'
-                },
-                {
-                  label: 'Highest Individual Deductible',
-                  value: '$2,000'
-                },
-                {
-                  label: 'Most Common Deductible Type',
-                  value: 'Calendar Year'
-                }
-              ]}
-            />
-          </ColumnLayout>
+          <ProgressBar
+            status="in-progress"
+            value={65}
+            label="Processing documents..."
+            description="Extracting benefit information from all documents"
+          />
         </Container>
       )}
+
+      <Alert type="info">
+        This page processes all benefit documents and extracts comprehensive information including coverage details, premiums, deductibles, and policy terms.
+      </Alert>
+
+      {showValidationAlert && validationAccuracy && (
+        <Alert
+          type={
+            validationAccuracy === 'High' ? 'success' : 
+            validationAccuracy === 'Medium' ? 'warning' : 
+            'error'
+          }
+          dismissible
+          onDismiss={() => setShowValidationAlert(false)}
+          header={`Validation Complete - ${validationAccuracy} Accuracy`}
+        >
+          <SpaceBetween size="s">
+            <Box>
+              {validationAccuracy === 'High' && 'The extracted data appears to be highly accurate and matches the document well.'}
+              {validationAccuracy === 'Medium' && 'The extracted data is mostly accurate but may have some minor discrepancies.'}
+              {validationAccuracy === 'Low' && 'The extracted data has significant discrepancies and should be reviewed carefully.'}
+            </Box>
+            <details>
+              <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>
+                View detailed validation report
+              </summary>
+              <Box margin={{ top: 's' }}>
+                <Textarea
+                  value={validationResult}
+                  readOnly
+                  rows={10}
+                  placeholder="Detailed validation feedback will appear here..."
+                />
+              </Box>
+            </details>
+          </SpaceBetween>
+        </Alert>
+      )} 
+
+      <ColumnLayout columns={2} variant="text-grid">
+        <SpaceBetween size="m">
+          <Container header={<Header variant="h2">PDF Document Viewer</Header>}>
+            {uploadingFile ? (
+              <Box textAlign="center" padding="xxl">
+                <ProgressBar
+                  status="in-progress"
+                  label="Loading PDF..."
+                  description="Preparing PDF for viewing"
+                />
+              </Box>
+            ) : selectedPdfUrl ? (
+              <div style={{ position: 'relative' }}>
+                {pdfLoading && (
+                  <div 
+                    style={{ 
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: 'rgba(255, 255, 255, 0.9)', 
+                      zIndex: 10,
+                      height: '600px'
+                    }}
+                  >
+                    <Box textAlign="center">
+                      <ProgressBar
+                        status="in-progress"
+                        label="Rendering PDF..."
+                        description="Loading PDF content in viewer"
+                      />
+                    </Box>
+                  </div>
+                )}
+                <iframe
+                  src={selectedPdfUrl}
+                  width="100%"
+                  height="600px"
+                  style={{ border: '1px solid #ccc', borderRadius: '4px' }}
+                  title="PDF Viewer"
+                  onLoad={() => {
+                    console.log('PDF iframe loaded successfully')
+                    setPdfLoading(false)
+                  }}
+                  onError={() => {
+                    console.log('PDF iframe failed to load')
+                    setPdfLoading(false)
+                  }}
+                />
+              </div>
+            ) : (
+              <Box textAlign="center" padding="xxl" color="text-status-inactive">
+                <Box variant="strong">No PDF selected</Box>
+                <Box variant="p">Upload a PDF file to view it here</Box>
+              </Box>
+            )}
+          </Container>
+
+          <Container header={<Header variant="h2">Prompt Configuration</Header>}>
+            <SpaceBetween size="m">
+              <FormField
+                label="Instructions"
+                description="Enter the instructions for how to process the document. This will be combined with the JSON schema below."
+              >
+                <Textarea
+                  value={promptInstructions}
+                  onChange={({ detail }) => setPromptInstructions(detail.value)}
+                  rows={4}
+                  placeholder="Enter instructions for document processing..."
+                />
+              </FormField>
+              
+              <FormField
+                label="Expected JSON Structure"
+                description="Define the JSON schema that the model should follow for the output format."
+              >
+                <Textarea
+                  value={jsonSchema}
+                  onChange={({ detail }) => setJsonSchema(detail.value)}
+                  rows={12}
+                  placeholder="Enter the expected JSON schema..."
+                />
+              </FormField>
+            </SpaceBetween>
+          </Container>
+
+          <Container header={<Header variant="h2">Model Configuration</Header>}>
+            <SpaceBetween size="s">
+              <FormField label="Model Selection" description="Choose the Bedrock model for document analysis">
+                <Select
+                  selectedOption={selectedModel}
+                  onChange={({ detail }) => setSelectedModel(detail.selectedOption as ModelOption)}
+                  options={modelOptions}
+                  placeholder={modelsLoading ? "Loading models..." : "Select a model"}
+                  disabled={modelsLoading}
+                  loadingText="Loading available models..."
+                />
+              </FormField>
+              
+
+              
+              <FormField label="Temperature" description="Controls randomness (0.0 = deterministic, 1.0 = creative)">
+                <Input
+                  value={temperature}
+                  onChange={({ detail }) => setTemperature(detail.value)}
+                  type="number"
+                  step={0.1}
+                  placeholder="0.1"
+                />
+              </FormField>
+            </SpaceBetween>
+          </Container>
+        </SpaceBetween>
+
+        <Container header={<Header variant="h2">Bedrock Extraction Output</Header>}>
+          <FormField
+            description="Results from Amazon Bedrock document analysis"
+          >
+            {parsedJsonOutput ? (
+              <div style={{ 
+                border: '1px solid #e1e4e8', 
+                borderRadius: '4px', 
+                padding: '12px',
+                backgroundColor: '#f8f9fa',
+                height: '1200px',
+                overflow: 'auto'
+              }}>
+                <JsonViewer 
+                  value={parsedJsonOutput}
+                  theme="light"
+                  displayDataTypes={false}
+                  enableClipboard={true}
+                  rootName="extraction_result"
+                />
+              </div>
+            ) : bedrockOutput ? (
+              <Textarea
+                value={bedrockOutput}
+                onChange={({ detail }) => setBedrockOutput(detail.value)}
+                rows={30}
+                placeholder="No extraction results yet. Upload a PDF and click Extract to see Bedrock output here."
+              />
+            ) : (
+              <Box textAlign="center" padding="l" color="text-status-inactive">
+                <Box variant="strong">No extraction results yet</Box>
+                <Box variant="p">Upload a PDF and click Extract to see Bedrock output here.</Box>
+              </Box>
+            )}
+          </FormField>
+        </Container>
+      </ColumnLayout>
+
+
     </SpaceBetween>
   )
 }

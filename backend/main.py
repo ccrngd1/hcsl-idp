@@ -129,36 +129,57 @@ async def delete_item(item_id: str):
 # Bedrock document processing endpoints
 @app.post("/api/bedrock/extract", response_model=BedrockExtractionResponse)
 async def extract_from_document(
-    pdf_file: UploadFile = File(...),
+    file: UploadFile = File(...),
     prompt_template: str = Form(...),
     model_id: str = Form("anthropic.claude-3-sonnet-20240229-v1:0"),
     hyperparameters: str = Form("{}")
 ):
     """
-    Extract information from PDF using AWS Bedrock
+    Extract information from documents (PDF, XLS, XLSX, CSV) using AWS Bedrock
     """
     # Validate file type
-    if pdf_file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    supported_types = [
+        "application/pdf",
+        "application/vnd.ms-excel",  # .xls
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+        "text/csv"  # .csv
+    ]
+    
+    if file.content_type not in supported_types:
+        raise HTTPException(
+            status_code=400, 
+            detail="Only PDF, XLS, XLSX, and CSV files are supported"
+        )
     
     try:
         # Parse hyperparameters
         hyperparams = json.loads(hyperparameters) if hyperparameters else {}
         
-        # Read PDF content
-        pdf_content = await pdf_file.read()
+        # Read file content
+        file_content = await file.read()
         
         # Record start time
         start_time = datetime.now()
         
-        # Process with Bedrock
-        result = await bedrock_service.process_document_with_bedrock(
-            pdf_content=pdf_content,
-            prompt_template=prompt_template,
-            model_id=model_id,
-            hyperparameters=hyperparams,
-            filename=pdf_file.filename or "document.pdf"
-        )
+        # Process with Bedrock based on file type
+        if file.content_type == "application/pdf":
+            result = await bedrock_service.process_document_with_bedrock(
+                pdf_content=file_content,
+                prompt_template=prompt_template,
+                model_id=model_id,
+                hyperparameters=hyperparams,
+                filename=file.filename or "document.pdf"
+            )
+        else:
+            # Handle spreadsheet files
+            result = await bedrock_service.process_spreadsheet_with_bedrock(
+                spreadsheet_content=file_content,
+                prompt_template=prompt_template,
+                model_id=model_id,
+                hyperparameters=hyperparams,
+                filename=file.filename or "spreadsheet",
+                content_type=file.content_type
+            )
         
         # Calculate processing time
         processing_time = (datetime.now() - start_time).total_seconds()
@@ -180,36 +201,57 @@ async def get_available_models():
 
 @app.post("/api/bedrock/validate", response_model=BedrockValidationResponse)
 async def validate_extraction(
-    pdf_file: UploadFile = File(...),
+    file: UploadFile = File(...),
     extracted_json: str = Form(...),
     model_id: str = Form("anthropic.claude-3-sonnet-20240229-v1:0"),
     hyperparameters: str = Form("{}")
 ):
     """
-    Validate extracted JSON against the original PDF using AWS Bedrock
+    Validate extracted JSON against the original document using AWS Bedrock
     """
     # Validate file type
-    if pdf_file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    supported_types = [
+        "application/pdf",
+        "application/vnd.ms-excel",  # .xls
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+        "text/csv"  # .csv
+    ]
+    
+    if file.content_type not in supported_types:
+        raise HTTPException(
+            status_code=400, 
+            detail="Only PDF, XLS, XLSX, and CSV files are supported"
+        )
     
     try:
         # Parse hyperparameters
         hyperparams = json.loads(hyperparameters) if hyperparameters else {}
         
-        # Read PDF content
-        pdf_content = await pdf_file.read()
+        # Read file content
+        file_content = await file.read()
         
         # Record start time
         start_time = datetime.now()
         
-        # Validate with Bedrock
-        result = await bedrock_service.validate_extraction_with_bedrock(
-            pdf_content=pdf_content,
-            extracted_json=extracted_json,
-            model_id=model_id,
-            hyperparameters=hyperparams,
-            filename=pdf_file.filename or "document.pdf"
-        )
+        # Validate with Bedrock based on file type
+        if file.content_type == "application/pdf":
+            result = await bedrock_service.validate_extraction_with_bedrock(
+                pdf_content=file_content,
+                extracted_json=extracted_json,
+                model_id=model_id,
+                hyperparameters=hyperparams,
+                filename=file.filename or "document.pdf"
+            )
+        else:
+            # Handle spreadsheet validation
+            result = await bedrock_service.validate_spreadsheet_extraction_with_bedrock(
+                spreadsheet_content=file_content,
+                extracted_json=extracted_json,
+                model_id=model_id,
+                hyperparameters=hyperparams,
+                filename=file.filename or "spreadsheet",
+                content_type=file.content_type
+            )
         
         # Calculate processing time
         processing_time = (datetime.now() - start_time).total_seconds()

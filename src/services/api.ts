@@ -35,7 +35,7 @@ export const apiService = {
 // Bedrock service for document processing
 export const bedrockService = {
   async extractFromDocument(
-    pdfFile: File,
+    file: File,
     promptTemplate: string,
     modelId: string,
     hyperparameters: {
@@ -43,7 +43,7 @@ export const bedrockService = {
     }
   ) {
     const formData = new FormData()
-    formData.append('pdf_file', pdfFile)
+    formData.append('file', file)
     formData.append('prompt_template', promptTemplate)
     formData.append('model_id', modelId)
     formData.append('hyperparameters', JSON.stringify(hyperparameters))
@@ -62,7 +62,7 @@ export const bedrockService = {
   },
 
   async validateExtraction(
-    pdfFile: File,
+    file: File,
     extractedJson: string,
     modelId: string,
     hyperparameters: {
@@ -70,7 +70,7 @@ export const bedrockService = {
     }
   ) {
     const formData = new FormData()
-    formData.append('pdf_file', pdfFile)
+    formData.append('file', file)
     formData.append('extracted_json', extractedJson)
     formData.append('model_id', modelId)
     formData.append('hyperparameters', JSON.stringify(hyperparameters))

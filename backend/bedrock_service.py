@@ -2,6 +2,8 @@ import boto3
 import base64
 import json
 import re
+import pandas as pd
+import io
 from typing import Dict, Any, Optional
 from fastapi import HTTPException
 import logging
@@ -509,6 +511,348 @@ Please provide a helpful, accurate response based on the document content. If th
                 raise HTTPException(status_code=503, detail=f"Model {model_id} is not ready. Try again later.")
             else:
                 raise HTTPException(status_code=500, detail=f"Bedrock chat processing failed: {str(e)}")
+
+    def convert_spreadsheet_to_text(self, spreadsheet_content: bytes, content_type: str, filename: str) -> str:
+        """
+        Convert spreadsheet content to text format for processing
+        """
+        try:
+            if content_type == "text/csv":
+                # Handle CSV files
+                df = pd.read_csv(io.BytesIO(spreadsheet_content))
+            elif content_type == "application/vnd.ms-excel":
+                # Handle .xls files
+                df = pd.read_excel(io.BytesIO(spreadsheet_content), engine='xlrd')
+            elif content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+                # Handle .xlsx files
+                df = pd.read_excel(io.BytesIO(spreadsheet_content), engine='openpyxl')
+            else:
+                raise ValueError(f"Unsupported content type: {content_type}")
+            
+            # Convert DataFrame to a structured text representation
+            text_content = f"Spreadsheet Data from file: {filename}\n"
+            text_content += f"Shape: {df.shape[0]} rows, {df.shape[1]} columns\n\n"
+            
+            # Add column information
+            text_content += "Columns:\n"
+            for i, col in enumerate(df.columns):
+                text_content += f"{i+1}. {col} (dtype: {df[col].dtype})\n"
+            text_content += "\n"
+            
+            # Add basic statistics for numerical columns
+            numeric_cols = df.select_dtypes(include=['number']).columns
+            if len(numeric_cols) > 0:
+                text_content += "Numerical Column Statistics:\n"
+                stats = df[numeric_cols].describe()
+                text_content += stats.to_string() + "\n\n"
+            
+            # Add sample data (first 10 rows)
+            text_content += "Sample Data (first 10 rows):\n"
+            text_content += df.head(10).to_string(index=True) + "\n\n"
+            
+            # Add data types and null counts
+            text_content += "Data Info:\n"
+            for col in df.columns:
+                null_count = df[col].isnull().sum()
+                unique_count = df[col].nunique()
+                text_content += f"{col}: {null_count} nulls, {unique_count} unique values\n"
+            
+            return text_content
+            
+        except Exception as e:
+            logger.error(f"Failed to convert spreadsheet to text: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Failed to process spreadsheet: {str(e)}")
+
+    async def process_spreadsheet_with_bedrock(
+        self,
+        spreadsheet_content: bytes,
+        prompt_template: str,
+        model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0",
+        hyperparameters: Optional[Dict[str, Any]] = None,
+        filename: str = "spreadsheet",
+        content_type: str = "text/csv"
+    ) -> Dict[str, Any]:
+        """
+        Process spreadsheet data using AWS Bedrock
+        
+        Args:
+            spreadsheet_content: Raw spreadsheet file content as bytes
+            prompt_template: The prompt template for analysis
+            model_id: Bedrock model identifier
+            hyperparameters: Model configuration parameters
+            filename: Original filename for reference
+            content_type: MIME type of the spreadsheet
+            
+        Returns:
+            Dictionary containing analysis results and metadata
+        """
+        try:
+            # Default hyperparameters
+            if hyperparameters is None:
+                hyperparameters = {
+                    "temperature": 0.1
+                }
+
+            # Convert spreadsheet to text
+            text_content = self.convert_spreadsheet_to_text(spreadsheet_content, content_type, filename)
+            
+            # Combine prompt with spreadsheet data
+            full_prompt = f"{prompt_template}\n\nSpreadsheet Data:\n{text_content}"
+
+            # Prepare the converse API request
+            converse_request = {
+                "modelId": model_id,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "text": full_prompt
+                            }
+                        ]
+                    }
+                ],
+                "inferenceConfig": {
+                    "temperature": hyperparameters.get("temperature", 0.1)
+                }
+            }
+
+            logger.info(f"Calling Bedrock Converse API for spreadsheet analysis with model: {model_id}")
+            
+            # Log the request details
+            request_log = {
+                "modelId": model_id,
+                "message_role": "user",
+                "prompt_template": prompt_template,
+                "filename": filename,
+                "content_type": content_type,
+                "spreadsheet_size_bytes": len(spreadsheet_content),
+                "text_content_length": len(text_content),
+                "inference_config": {
+                    "temperature": hyperparameters.get("temperature", 0.1)
+                }
+            }
+            print("=" * 80)
+            print("BEDROCK SPREADSHEET REQUEST:")
+            print(json.dumps(request_log, indent=2))
+            print("=" * 80)
+            
+            # Call Bedrock Converse API
+            response = self.bedrock_client.converse(**converse_request)
+            
+            # Log the full response
+            print("BEDROCK SPREADSHEET RESPONSE:")
+            print(json.dumps(response, indent=2, default=str))
+            print("=" * 80)
+            
+            # Extract the response content
+            output_message = response['output']['message']
+            content = output_message['content'][0]['text']
+            
+            # Log just the extracted content for easy reading
+            print("EXTRACTED SPREADSHEET ANALYSIS:")
+            print(content)
+            print("=" * 80)
+            
+            # Parse usage metrics
+            usage = response.get('usage', {})
+            
+            result = {
+                "success": True,
+                "extracted_content": content,
+                "model_used": model_id,
+                "usage_metrics": {
+                    "input_tokens": usage.get('inputTokens', 0),
+                    "output_tokens": usage.get('outputTokens', 0),
+                    "total_tokens": usage.get('totalTokens', 0)
+                },
+                "hyperparameters_used": hyperparameters,
+                "document_info": {
+                    "spreadsheet_size_bytes": len(spreadsheet_content),
+                    "text_content_length": len(text_content),
+                    "content_type": content_type,
+                    "filename": filename,
+                    "has_spreadsheet_content": True
+                }
+            }
+            
+            logger.info(f"Successfully processed spreadsheet. Output tokens: {usage.get('outputTokens', 0)}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Bedrock spreadsheet processing failed: {str(e)}")
+            
+            # Handle specific AWS errors
+            if "ValidationException" in str(e):
+                raise HTTPException(status_code=400, detail=f"Invalid request parameters: {str(e)}")
+            elif "AccessDeniedException" in str(e):
+                raise HTTPException(status_code=403, detail="Access denied. Check IAM permissions for Bedrock.")
+            elif "ThrottlingException" in str(e):
+                raise HTTPException(status_code=429, detail="Request throttled. Please try again later.")
+            elif "ModelNotReadyException" in str(e):
+                raise HTTPException(status_code=503, detail=f"Model {model_id} is not ready. Try again later.")
+            else:
+                raise HTTPException(status_code=500, detail=f"Bedrock spreadsheet processing failed: {str(e)}")
+
+    async def validate_spreadsheet_extraction_with_bedrock(
+        self,
+        spreadsheet_content: bytes,
+        extracted_json: str,
+        model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0",
+        hyperparameters: Optional[Dict[str, Any]] = None,
+        filename: str = "spreadsheet",
+        content_type: str = "text/csv"
+    ) -> Dict[str, Any]:
+        """
+        Validate extracted JSON against the original spreadsheet data using AWS Bedrock
+        
+        Args:
+            spreadsheet_content: Raw spreadsheet file content as bytes
+            extracted_json: The JSON string to validate
+            model_id: Bedrock model identifier
+            hyperparameters: Model configuration parameters
+            filename: Original filename for reference
+            content_type: MIME type of the spreadsheet
+            
+        Returns:
+            Dictionary containing validation results and metadata
+        """
+        try:
+            # Default hyperparameters
+            if hyperparameters is None:
+                hyperparameters = {
+                    "temperature": 0.1
+                }
+
+            # Convert spreadsheet to text
+            text_content = self.convert_spreadsheet_to_text(spreadsheet_content, content_type, filename)
+            
+            # Create validation prompt
+            validation_prompt = f"""Validate that the information in the JSON matches the provided spreadsheet data.
+
+Please carefully review the spreadsheet data and the extracted JSON data below, then provide a detailed validation report.
+
+Spreadsheet Data:
+{text_content}
+
+Extracted JSON to validate:
+{extracted_json}
+
+Instructions:
+1. Compare each piece of information in the JSON against what you can see in the spreadsheet data
+2. Verify statistical calculations and data summaries
+3. Check if patterns and insights are supported by the actual data
+4. Identify any discrepancies, missing information, or incorrect values
+5. Note any important information in the spreadsheet that wasn't captured in the JSON
+6. Provide an overall accuracy assessment (must be exactly "High", "Medium", or "Low")
+7. Give specific recommendations for corrections if needed
+
+Please provide your validation in the following format:
+- Overall Accuracy: [High/Medium/Low] (use exactly one of these three words)
+- Data Accuracy: [Assessment of statistical accuracy]
+- Insights Validation: [Assessment of patterns and insights]
+- Missing Information: [List any important information not captured]
+- Recommendations: [Specific suggestions for improvement]
+- Validation Summary: [Brief overall assessment]
+
+IMPORTANT: Start your response with "Overall Accuracy: High", "Overall Accuracy: Medium", or "Overall Accuracy: Low" so the system can properly categorize the results."""
+
+            # Prepare the converse API request
+            converse_request = {
+                "modelId": model_id,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "text": validation_prompt
+                            }
+                        ]
+                    }
+                ],
+                "inferenceConfig": {
+                    "temperature": hyperparameters.get("temperature", 0.1)
+                }
+            }
+
+            logger.info(f"Calling Bedrock Converse API for spreadsheet validation with model: {model_id}")
+            
+            # Log the request details
+            request_log = {
+                "modelId": model_id,
+                "message_role": "user",
+                "validation_prompt": "Validate JSON against spreadsheet data",
+                "filename": filename,
+                "content_type": content_type,
+                "spreadsheet_size_bytes": len(spreadsheet_content),
+                "json_length": len(extracted_json),
+                "text_content_length": len(text_content),
+                "inference_config": {
+                    "temperature": hyperparameters.get("temperature", 0.1)
+                }
+            }
+            print("=" * 80)
+            print("BEDROCK SPREADSHEET VALIDATION REQUEST:")
+            print(json.dumps(request_log, indent=2))
+            print("=" * 80)
+            
+            # Call Bedrock Converse API
+            response = self.bedrock_client.converse(**converse_request)
+            
+            # Log the full response
+            print("BEDROCK SPREADSHEET VALIDATION RESPONSE:")
+            print(json.dumps(response, indent=2, default=str))
+            print("=" * 80)
+            
+            # Extract the response content
+            output_message = response['output']['message']
+            validation_content = output_message['content'][0]['text']
+            
+            # Log just the validation content for easy reading
+            print("SPREADSHEET VALIDATION CONTENT:")
+            print(validation_content)
+            print("=" * 80)
+            
+            # Parse usage metrics
+            usage = response.get('usage', {})
+            
+            result = {
+                "success": True,
+                "validation_result": validation_content,
+                "model_used": model_id,
+                "usage_metrics": {
+                    "input_tokens": usage.get('inputTokens', 0),
+                    "output_tokens": usage.get('outputTokens', 0),
+                    "total_tokens": usage.get('totalTokens', 0)
+                },
+                "hyperparameters_used": hyperparameters,
+                "document_info": {
+                    "spreadsheet_size_bytes": len(spreadsheet_content),
+                    "json_length": len(extracted_json),
+                    "text_content_length": len(text_content),
+                    "content_type": content_type,
+                    "filename": filename,
+                    "has_spreadsheet_content": True
+                }
+            }
+            
+            logger.info(f"Successfully validated spreadsheet extraction. Output tokens: {usage.get('outputTokens', 0)}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Bedrock spreadsheet validation failed: {str(e)}")
+            
+            # Handle specific AWS errors
+            if "ValidationException" in str(e):
+                raise HTTPException(status_code=400, detail=f"Invalid request parameters: {str(e)}")
+            elif "AccessDeniedException" in str(e):
+                raise HTTPException(status_code=403, detail="Access denied. Check IAM permissions for Bedrock.")
+            elif "ThrottlingException" in str(e):
+                raise HTTPException(status_code=429, detail="Request throttled. Please try again later.")
+            elif "ModelNotReadyException" in str(e):
+                raise HTTPException(status_code=503, detail=f"Model {model_id} is not ready. Try again later.")
+            else:
+                raise HTTPException(status_code=500, detail=f"Bedrock spreadsheet validation failed: {str(e)}")
 
     def get_available_models(self) -> Dict[str, Any]:
         """

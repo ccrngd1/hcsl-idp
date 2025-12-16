@@ -185,23 +185,53 @@ Return only the JSON output.`
   }
 }`
   )
-  const [bedrockOutput, setBedrockOutput] = useState('')
-  const [parsedJsonOutput, setParsedJsonOutput] = useState<any>(null)
+  const [bedrockOutput, setBedrockOutput] = useState(
+    sessionStorage.getItem('dataReportBedrockOutput') || ''
+  )
+  const [parsedJsonOutput, setParsedJsonOutput] = useState<any>(() => {
+    const saved = sessionStorage.getItem('dataReportParsedJsonOutput')
+    return saved ? JSON.parse(saved) : null
+  })
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [selectedFileName, setSelectedFileName] = useState(
+    sessionStorage.getItem('dataReportSelectedFileName') || ''
+  )
+  const [selectedFileSize, setSelectedFileSize] = useState(
+    sessionStorage.getItem('dataReportSelectedFileSize') || ''
+  )
+  const [selectedFileType, setSelectedFileType] = useState(
+    sessionStorage.getItem('dataReportSelectedFileType') || ''
+  )
+  const [selectedFileLastModified, setSelectedFileLastModified] = useState(
+    sessionStorage.getItem('dataReportSelectedFileLastModified') || ''
+  )
   const fileInputRef = useRef<HTMLInputElement>(null)
   
   // Validation state
   const [validating, setValidating] = useState(false)
-  const [validationResult, setValidationResult] = useState('')
-  const [hasExtracted, setHasExtracted] = useState(false)
-  const [validationAccuracy, setValidationAccuracy] = useState<'High' | 'Medium' | 'Low' | null>(null)
-  const [showValidationAlert, setShowValidationAlert] = useState(false)
+  const [validationResult, setValidationResult] = useState(
+    sessionStorage.getItem('dataReportValidationResult') || ''
+  )
+  const [hasExtracted, setHasExtracted] = useState(() => {
+    const saved = sessionStorage.getItem('dataReportHasExtracted')
+    return saved ? JSON.parse(saved) : false
+  })
+  const [validationAccuracy, setValidationAccuracy] = useState<'High' | 'Medium' | 'Low' | null>(() => {
+    const saved = sessionStorage.getItem('dataReportValidationAccuracy')
+    return saved ? (saved as 'High' | 'Medium' | 'Low') : null
+  })
+  const [showValidationAlert, setShowValidationAlert] = useState(() => {
+    const saved = sessionStorage.getItem('dataReportShowValidationAlert')
+    return saved ? JSON.parse(saved) : false
+  })
 
   // LLM Configuration State
   const [selectedModel, setSelectedModel] = useState<ModelOption | null>(null)
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
   const [modelsLoading, setModelsLoading] = useState(true)
-  const [temperature, setTemperature] = useState('0.1')
+  const [temperature, setTemperature] = useState(
+    sessionStorage.getItem('dataReportTemperature') || '0.1'
+  )
 
   // Load available models on component mount
   useEffect(() => {
@@ -243,10 +273,55 @@ Return only the JSON output.`
     loadModels()
   }, [])
 
+  // Save state to sessionStorage when values change
+  useEffect(() => {
+    sessionStorage.setItem('dataReportBedrockOutput', bedrockOutput)
+  }, [bedrockOutput])
+
+  useEffect(() => {
+    sessionStorage.setItem('dataReportParsedJsonOutput', JSON.stringify(parsedJsonOutput))
+  }, [parsedJsonOutput])
+
+  useEffect(() => {
+    sessionStorage.setItem('dataReportValidationResult', validationResult)
+  }, [validationResult])
+
+  useEffect(() => {
+    sessionStorage.setItem('dataReportHasExtracted', JSON.stringify(hasExtracted))
+  }, [hasExtracted])
+
+  useEffect(() => {
+    sessionStorage.setItem('dataReportValidationAccuracy', validationAccuracy || '')
+  }, [validationAccuracy])
+
+  useEffect(() => {
+    sessionStorage.setItem('dataReportShowValidationAlert', JSON.stringify(showValidationAlert))
+  }, [showValidationAlert])
+
+  useEffect(() => {
+    sessionStorage.setItem('dataReportTemperature', temperature)
+  }, [temperature])
+
+  useEffect(() => {
+    sessionStorage.setItem('dataReportSelectedFileName', selectedFileName)
+  }, [selectedFileName])
+
+  useEffect(() => {
+    sessionStorage.setItem('dataReportSelectedFileSize', selectedFileSize)
+  }, [selectedFileSize])
+
+  useEffect(() => {
+    sessionStorage.setItem('dataReportSelectedFileType', selectedFileType)
+  }, [selectedFileType])
+
+  useEffect(() => {
+    sessionStorage.setItem('dataReportSelectedFileLastModified', selectedFileLastModified)
+  }, [selectedFileLastModified])
+
 
   const handleExtractAll = async () => {
     if (!selectedFile) {
-      alert('Please upload a spreadsheet file first')
+      alert('Please upload a spreadsheet file first. The file from your previous session is not available.')
       return
     }
 
@@ -337,7 +412,7 @@ Return only the JSON output.`
 
   const handleValidate = async () => {
     if (!selectedFile) {
-      alert('Please upload a spreadsheet file first')
+      alert('Please upload a spreadsheet file first. The file from your previous session is not available.')
       return
     }
 
@@ -413,17 +488,24 @@ Return only the JSON output.`
         
         console.log('Processing file selection...')
         
-        // Set the selected file
+        // Set the selected file and save metadata
         setSelectedFile(file)
+        setSelectedFileName(file.name)
+        setSelectedFileSize((file.size / 1024 / 1024).toFixed(2))
+        setSelectedFileType(file.type || 'Unknown')
+        setSelectedFileLastModified(new Date(file.lastModified).toLocaleString())
         await new Promise(resolve => setTimeout(resolve, 0))
         
-        // Clear previous output
-        setBedrockOutput('')
-        setParsedJsonOutput(null)
-        setHasExtracted(false)
-        setValidationResult('')
-        setValidationAccuracy(null)
-        setShowValidationAlert(false)
+        // Only clear previous output if this is a new file (different from stored file)
+        const storedFileName = sessionStorage.getItem('dataReportSelectedFileName')
+        if (storedFileName !== file.name) {
+          setBedrockOutput('')
+          setParsedJsonOutput(null)
+          setHasExtracted(false)
+          setValidationResult('')
+          setValidationAccuracy(null)
+          setShowValidationAlert(false)
+        }
         
         console.log('Spreadsheet file loaded:', file.name, `(${(file.size / 1024 / 1024).toFixed(2)} MB)`)
       } catch (error) {
@@ -444,9 +526,45 @@ Return only the JSON output.`
     fileInputRef.current?.click()
   }
 
-
-
-
+  const handleClear = () => {
+    // Clear all state
+    setSelectedFile(null)
+    setSelectedFileName('')
+    setSelectedFileSize('')
+    setSelectedFileType('')
+    setSelectedFileLastModified('')
+    setBedrockOutput('')
+    setParsedJsonOutput(null)
+    setHasExtracted(false)
+    setValidationResult('')
+    setValidationAccuracy(null)
+    setShowValidationAlert(false)
+    
+    // Clear file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+    
+    // Clear all sessionStorage items for this page
+    const keysToRemove = [
+      'dataReportBedrockOutput',
+      'dataReportParsedJsonOutput',
+      'dataReportValidationResult',
+      'dataReportHasExtracted',
+      'dataReportValidationAccuracy',
+      'dataReportShowValidationAlert',
+      'dataReportSelectedFileName',
+      'dataReportSelectedFileSize',
+      'dataReportSelectedFileType',
+      'dataReportSelectedFileLastModified'
+    ]
+    
+    keysToRemove.forEach(key => {
+      sessionStorage.removeItem(key)
+    })
+    
+    console.log('Page cleared and reset')
+  }
 
   return (
     <SpaceBetween size="l">
@@ -462,6 +580,12 @@ Return only the JSON output.`
               accept=".xls,.xlsx,.csv"
               style={{ display: 'none' }}
             />
+            <Button
+              onClick={handleClear}
+              iconName="refresh"
+            >
+              Clear
+            </Button>
             <Button
               onClick={handleUploadClick}
               iconName="upload"
@@ -550,21 +674,26 @@ Return only the JSON output.`
                   description="Preparing spreadsheet for processing"
                 />
               </Box>
-            ) : selectedFile ? (
+            ) : selectedFile || selectedFileName ? (
               <Box padding="l">
                 <SpaceBetween size="s">
                   <Box>
-                    <Box variant="strong">File Name:</Box> {selectedFile.name}
+                    <Box variant="strong">File Name:</Box> {selectedFile?.name || selectedFileName}
                   </Box>
                   <Box>
-                    <Box variant="strong">File Size:</Box> {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                    <Box variant="strong">File Size:</Box> {selectedFile ? (selectedFile.size / 1024 / 1024).toFixed(2) : selectedFileSize} MB
                   </Box>
                   <Box>
-                    <Box variant="strong">File Type:</Box> {selectedFile.type || 'Unknown'}
+                    <Box variant="strong">File Type:</Box> {selectedFile?.type || selectedFileType || 'Unknown'}
                   </Box>
                   <Box>
-                    <Box variant="strong">Last Modified:</Box> {new Date(selectedFile.lastModified).toLocaleString()}
+                    <Box variant="strong">Last Modified:</Box> {selectedFile ? new Date(selectedFile.lastModified).toLocaleString() : selectedFileLastModified}
                   </Box>
+                  {!selectedFile && selectedFileName && (
+                    <Alert type="warning" header="File Not Available">
+                      File information is restored from previous session. Please re-upload the file to generate new reports.
+                    </Alert>
+                  )}
                 </SpaceBetween>
                 <Alert type="info" header="File Processing Note">
                   Spreadsheet files cannot be previewed directly. Click "Generate Data Report" to process the file and extract structured data analysis.
