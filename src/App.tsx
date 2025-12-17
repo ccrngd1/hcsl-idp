@@ -54,7 +54,7 @@ function AppContent() {
       <TopNavigation
         identity={{
           href: '/',
-          title: 'Cloudscape App'
+          title: 'No Code GenAI IDP'
         }}
         utilities={[
           {
