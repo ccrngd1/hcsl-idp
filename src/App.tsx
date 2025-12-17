@@ -54,7 +54,7 @@ function AppContent() {
       <TopNavigation
         identity={{
           href: '/',
-          title: 'No Code GenAI IDP'
+          title: 'GenAI IDP'
         }}
         utilities={[
           {
